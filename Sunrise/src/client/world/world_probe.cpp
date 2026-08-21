@@ -2,9 +2,10 @@
  * The world probe. The physics sync reports every component it runs for, so the probe keeps what
  * it saw in a fixed table and picks the body nearest the camera ray once a frame.
  *
- * It is a pick over reported bodies, not a collision query: the game's own trace is not reachable
- * from here, and static geometry never reports a body. The frame poll publishes one report under
- * a sequence guard, so the interface reads a whole pass rather than parts of two.
+ * The pick is over reported bodies only, so static geometry is never picked. Beside it the probe
+ * runs the game's own world trace, which the entity spawner exposes, and that one does hit static
+ * geometry. The frame poll publishes one report under a sequence guard, so the interface reads a
+ * whole pass rather than parts of two.
  */
 
 #include "world_probe.h"
@@ -21,6 +22,7 @@
 #include <string_view>
 
 #include "../../core/logging/log.h"
+#include "../hooks/spawn/spawn_runtime.h"
 #include "../hooks/teleport/runtime.h"
 #include "../player/player_position.h"
 
@@ -28,6 +30,7 @@ namespace sunrise::client::world {
 namespace {
 
 namespace teleport = hooks::teleport;
+namespace spawn = hooks::spawn;
 
 /** Slots one insert probes before it takes the oldest of them. It bounds the insert cost. */
 constexpr std::size_t kProbeLength = 8;
@@ -245,6 +248,28 @@ void pick(Report& report, std::uint64_t now) noexcept {
         report.target.handleIndex = slot.handleIndex;
         report.target.component = slot.component;
     }
+    if (report.target.present) {
+        // The physics component reports index bits only, so the record itself supplies the
+        // generation that completes the handle.
+        std::uint32_t handle = 0;
+        report.target.object = spawn::object_record_by_index(report.target.handleIndex, handle);
+        report.target.objectResolved = report.target.object != nullptr;
+        report.target.handle = handle;
+    }
+    // The trace is the game's own query, so it reports the surface the crosshair rests on even
+    // where no body is reported. The pick above cannot see that surface at all.
+    spawn::SurfaceHit hit{};
+    if (spawn::trace(report.rayOrigin, direction, probeDistance, hit)) {
+        report.surface.present = true;
+        report.surface.point = hit.point;
+        report.surface.distance = hit.distance;
+        report.surface.fraction = hit.fraction;
+        report.surface.code = hit.code;
+        if (hit.code >= 0) {
+            report.surface.codeObject = spawn::object_record(static_cast<std::uint32_t>(hit.code));
+            report.surface.codeResolved = report.surface.codeObject != nullptr;
+        }
+    }
 }
 
 /** @param report Report to publish under the sequence guard. */
@@ -327,6 +352,43 @@ void log_local(const Report& report) noexcept {
     }
 }
 
+/** Logs the crosshair result, which is the body pick beside the game's own world trace. */
+void log_crosshair(const Report& report) noexcept {
+    std::array<char, 192> line{};
+    int written = std::snprintf(
+        line.data(),
+        line.size(),
+        "ev=world_probe stage=dump part=target present=%u index=%u handle=0x%08X "
+        "object=0x%llX dist=%.2f pos=%.2f,%.2f,%.2f",
+        report.target.present ? 1U : 0U,
+        report.target.handleIndex,
+        report.target.handle,
+        static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(report.target.object)),
+        static_cast<double>(report.target.distance),
+        static_cast<double>(report.target.position[0]),
+        static_cast<double>(report.target.position[1]),
+        static_cast<double>(report.target.position[2]));
+    if (written > 0) {
+        write_line({line.data(), static_cast<std::size_t>(written)});
+    }
+    line = {};
+    written = std::snprintf(line.data(),
+                            line.size(),
+                            "ev=world_probe stage=dump part=surface present=%u code=%d resolved=%u "
+                            "frac=%.3f dist=%.2f pos=%.2f,%.2f,%.2f",
+                            report.surface.present ? 1U : 0U,
+                            report.surface.code,
+                            report.surface.codeResolved ? 1U : 0U,
+                            static_cast<double>(report.surface.fraction),
+                            static_cast<double>(report.surface.distance),
+                            static_cast<double>(report.surface.point[0]),
+                            static_cast<double>(report.surface.point[1]),
+                            static_cast<double>(report.surface.point[2]));
+    if (written > 0) {
+        write_line({line.data(), static_cast<std::size_t>(written)});
+    }
+}
+
 /** Logs the bodies nearest the player. @param report Report the local position comes from. */
 void log_bodies(const Report& report) noexcept {
     const std::uint64_t now = GetTickCount64();
@@ -387,6 +449,7 @@ void run_dump(const Report& report) noexcept {
     write_line("ev=world_probe stage=dump result=begin");
     log_local(report);
     log_camera_window();
+    log_crosshair(report);
     log_bodies(report);
     write_line("ev=world_probe stage=dump result=end");
     g_dumpSequence.fetch_add(1, std::memory_order_release);
@@ -486,6 +549,19 @@ void publish_settings(const PickSettings& value) noexcept {
 }
 
 /** Copies bytes out of game memory for the interface's memory view. */
+std::size_t read_object(std::uint32_t handle, std::span<std::byte> output) noexcept {
+    const void* const record = spawn::object_record(handle);
+    if (record == nullptr) {
+        return 0;
+    }
+    const std::size_t wanted = (std::min)(output.size(), spawn::object_record_bytes());
+    return read_raw(record, output.first(wanted));
+}
+
+std::size_t object_record_bytes() noexcept {
+    return spawn::object_record_bytes();
+}
+
 std::size_t read_raw(const void* address, std::span<std::byte> output) noexcept {
     if (address == nullptr || output.empty()) {
         return 0;

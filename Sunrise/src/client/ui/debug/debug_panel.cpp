@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <imgui.h>
 #include <span>
 #include <string_view>
@@ -42,6 +43,10 @@ constexpr std::size_t kViewColumns = 16;
 constexpr int kMaximumViewOffset = 4096;
 /** Height of the dump view, in authored pixels. It holds about ten lines. */
 constexpr float kDumpViewHeight = 200.0F;
+/** Bytes of one object record the unit view shows. It covers a whole datum-array record. */
+constexpr std::size_t kObjectViewBytes = 224;
+/** Height of the object record view, in authored pixels. */
+constexpr float kObjectViewHeight = 180.0F;
 
 /** Offset the memory view starts at, held for the session only. */
 int g_viewOffset = 0;
@@ -202,7 +207,13 @@ void draw_target(const world::Report& report) noexcept {
         return;
     }
     const world::TargetReport& target = report.target;
-    draw_value("Object handle", "%u", target.handleIndex);
+    draw_value("Object handle", "index %u", target.handleIndex);
+    if (target.objectResolved) {
+        draw_value("Full handle", "0x%08X", target.handle);
+        draw_address("Object record", target.object);
+    } else {
+        draw_row("Object record", "The datum array holds no live object under that index.");
+    }
     draw_vector("World position", target.position, true);
     draw_vector("Closest ray point", target.rayPoint, true);
     draw_value("Distance", "%.2f units", static_cast<double>(target.distance));
@@ -215,16 +226,79 @@ void draw_target(const world::Report& report) noexcept {
     draw_address("Physics component", target.component);
 }
 
+/** Draws the surface the game's own world trace reports under the crosshair. */
+void draw_surface(const world::Report& report) noexcept {
+    ImGui::TextUnformatted("Surface at crosshair");
+    ImGui::Separator();
+    if (!report.surface.present) {
+        ImGui::TextDisabled("The world trace reported no hit inside the probe distance, or the "
+                            "spawn hooks are not installed.");
+        return;
+    }
+    const world::SurfaceReport& surface = report.surface;
+    draw_vector("Hit position", surface.point, true);
+    draw_value("Distance", "%.2f units", static_cast<double>(surface.distance));
+    draw_value("Segment covered", "%.3f", static_cast<double>(surface.fraction));
+    if (surface.codeResolved) {
+        draw_value("Trace code", "%d  (a live object handle)", surface.code);
+        draw_address("Object record", surface.codeObject);
+    } else {
+        draw_value("Trace code", "%d  (no object under it, so a material index)", surface.code);
+    }
+}
+
 /** Draws what the client cannot report yet, so the gap is stated instead of being left blank. */
-void draw_unit_state() noexcept {
+void draw_unit_state(const world::Report& report) noexcept {
     ImGui::TextUnformatted("Unit state");
     ImGui::Separator();
-    ImGui::TextWrapped("Health, combatant state and AI state are not reported yet. The client "
-                       "reaches a body through the physics component, and no field on that path "
-                       "is known to hold them.");
-    ImGui::TextWrapped("The game executable is packed, so these offsets cannot be found by "
-                       "reading the file. They have to be found in the running process. The "
-                       "memory view below and the log dump exist for that work.");
+    ImGui::TextWrapped("Health, combatant state and AI state have no known offset yet. The game "
+                       "executable is packed, so they cannot be found by reading the file. They "
+                       "have to be found in the running process, which is what this view is for.");
+    if (!report.target.objectResolved) {
+        ImGui::TextDisabled("No object record to read. Pick a unit with the crosshair first.");
+        return;
+    }
+    std::array<std::byte, kObjectViewBytes> bytes{};
+    const std::size_t read = world::read_object(report.target.handle, bytes);
+    if (read == 0) {
+        ImGui::TextDisabled("The record read failed. The object may have been released.");
+        return;
+    }
+    ImGui::Text("Object record, %zu bytes", read);
+    if (ImGui::BeginChild(
+            "object_record", ImVec2(0.0F, kObjectViewHeight), ImGuiChildFlags_Borders)) {
+        for (std::size_t row = 0; row < read; row += kViewColumns) {
+            std::array<char, 160> line{};
+            int written = std::snprintf(line.data(), line.size(), "%04zu ", row);
+            for (std::size_t column = 0; column < kViewColumns && row + column < read; ++column) {
+                if (written <= 0 || static_cast<std::size_t>(written) >= line.size()) {
+                    break;
+                }
+                written += std::snprintf(line.data() + written,
+                                         line.size() - static_cast<std::size_t>(written),
+                                         " %02X",
+                                         static_cast<unsigned>(bytes[row + column]));
+            }
+            ImGui::TextUnformatted(line.data());
+        }
+    }
+    ImGui::EndChild();
+    // Health in this engine is most often a float that falls as the unit is hurt, so the record
+    // is also offered as floats. A lane that only falls under fire is the one to look at.
+    if (ImGui::TreeNodeEx("Record as floats", ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        for (std::size_t offset = 0; offset + sizeof(float) * 4 <= read;
+             offset += sizeof(float) * 4) {
+            std::array<float, 4> lanes{};
+            std::memcpy(lanes.data(), bytes.data() + offset, sizeof lanes);
+            ImGui::Text("%04zu  %12.3f  %12.3f  %12.3f  %12.3f",
+                        offset,
+                        static_cast<double>(lanes[0]),
+                        static_cast<double>(lanes[1]),
+                        static_cast<double>(lanes[2]),
+                        static_cast<double>(lanes[3]));
+        }
+        ImGui::TreePop();
+    }
 }
 
 /** Draws the raw bytes of one tracked component, which is how new offsets are found. */
@@ -363,7 +437,9 @@ void draw() noexcept {
     ImGui::Spacing();
     draw_target(report);
     ImGui::Spacing();
-    draw_unit_state();
+    draw_surface(report);
+    ImGui::Spacing();
+    draw_unit_state(report);
     ImGui::Spacing();
     if (ImGui::CollapsingHeader("Memory view##debug")) {
         draw_memory_view(report);

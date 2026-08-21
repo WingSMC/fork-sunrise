@@ -72,7 +72,9 @@ Sunrise organizes UI panels using a modular registry (`ui_module_registry.h`):
 The Debug panel reports what the client can prove about the local player and about what the
 camera points at. It reads from the world probe (`client/world/world_probe.cpp`).
 
-**Data source.** The physics sync hook reports every physics component it runs for. The probe
+**Data source.** The world trace and the object datum array come from the entity spawner
+(`client/hooks/spawn/spawn_runtime.cpp`), so the panel reports them only while the spawn hooks are
+installed. The physics sync hook reports every physics component it runs for. The probe
 keeps the last position, velocity and object handle of each one in a fixed table of 512 slots. An
 entry that no tick reports for 500 ms is dropped. The probe reads only while the Debug page is
 open: the page renews a scan request every frame, and without that request the physics tick costs
@@ -85,22 +87,27 @@ one atomic read per component.
 | Player position     | World position, velocity, speed, camera forward vector, yaw and pitch, and the eye position when the pose read is proved.       |
 | Player state        | In-world flag, controlled object handle, physics component address, activity name, session, region, bubble and slice-set state. |
 | Crosshair ray       | Ray origin, and the point the ray reaches at a chosen probe distance.                                                           |
-| Target at crosshair | The picked body: object handle, world position, distance, distance off the ray, angle, velocity, speed and component address.   |
-| Unit state          | States that health, combatant state and AI state are not reported yet, and why.                                                 |
+| Target at crosshair | The picked body: index bits, full object handle, object record address, world position, distance, distance off the ray, angle, velocity, speed and component address. |
+| Surface at crosshair | The world-trace result: hit position, distance, covered part of the segment, and the trace code with whether it resolved as an object handle. |
+| Unit state          | The raw object record of the picked unit, as hexadecimal and as floats, because health and AI state have no confirmed offset yet. |
 | Memory view         | Raw bytes of the player's or the target's physics component, as hexadecimal and as floats.                                      |
 | Probe               | Tracked and considered body counts, pick radius, pick range, and the log dump button.                                           |
 
 **Limits you must keep in mind.**
 
 - The pick is **not** a collision query. It selects the body nearest the camera ray inside the
-  pick radius. The engine's own world trace has no signature yet, so the reported ray point is the
-  ray at a set distance and not a surface hit.
-- Only bodies that the physics tick reports can be picked. Map geometry has no such body and never
-  appears.
+  pick radius, so only bodies that the physics tick reports can be picked. Map geometry has no such
+  body and never appears in `Target at crosshair`.
+- `Surface at crosshair` **is** a collision query. It calls the game's own world raycast, the one
+  the entity spawner places entities with, so it hits map geometry as well. It needs the spawn
+  hooks to be installed.
 - The ray starts at the camera eye only when the eye-position read passes its checks. Otherwise it
   starts at the player body, and the page says which origin was used.
-- Health, combatant state and AI state need the object datum array, which is not resolved yet. See
+- Health, combatant state and AI state are still not named. The object record is readable, but no
+  offset inside it is confirmed to hold them. See
   [`reverse-engineering-notes.md`](reverse-engineering-notes.md).
+- The object record is game memory the game may free. The page never keeps the pointer: it copies
+  the bytes through the probe on every frame it draws.
 - The dump runs on the next game tick, not on the click, because the body table belongs to the
   game thread. It is shown in the page itself: the shipped client log level is `warn`, so the log
   copy of the dump is dropped on a normal run.

@@ -49,14 +49,15 @@ offsets are in [`internal.h`](../Sunrise/src/client/hooks/teleport/internal.h).
 
 ### Confirmed offsets
 
-| Structure         | Offset | Field                                                                      |
-| ----------------- | ------ | -------------------------------------------------------------------------- |
-| Physics component | 44     | Object handle, `u16`. Its low 13 bits name one object.                     |
-| Physics component | 400    | Rigid-body array                                                           |
-| Physics component | 516    | Rigid-body index, signed                                                   |
-| Rigid body        | 448    | World position, three floats (hypothesis, in use since the teleport works) |
-| Rigid body        | 560    | Linear velocity, three floats                                              |
-| Camera pose block | 1468   | Forward vector, three floats. Its default is `(1,0,0)`.                    |
+| Structure         | Offset | Field                                                                                    |
+| ----------------- | ------ | ---------------------------------------------------------------------------------------- |
+| Physics component | 44     | Object handle, `u16`. Its low 13 bits name one object.                                   |
+| Physics component | 400    | Rigid-body array                                                                         |
+| Physics component | 516    | Rigid-body index, signed                                                                 |
+| Rigid body        | 448    | World position, three floats (hypothesis, in use since the teleport works)               |
+| Rigid body        | 560    | Linear velocity, three floats                                                            |
+| Camera pose block | 1428   | Eye position, three floats. Confirmed by the entity spawner of upstream pull request 46. |
+| Camera pose block | 1468   | Forward vector, three floats. Its default is `(1,0,0)`.                                  |
 
 The camera basis is **X forward, Z up**.
 
@@ -66,26 +67,67 @@ The camera basis is **X forward, Z up**.
 | ----------------- | ------ | ------------------- | ------------------------------- |
 | Camera pose block | 1480   | Second basis vector | Read, then validated at runtime |
 | Camera pose block | 1492   | Third basis vector  | Read, then validated at runtime |
-| Camera pose block | 1504   | Eye position        | Read, then validated at runtime |
 
-The hypothesis is that the pose block holds a basis and then a translation, in that order, right
-after the forward vector. The client never trusts it: `capture_forward` checks that the three
-vectors are unit length and mutually perpendicular, and that the fourth vector is finite and
-inside the world bound. `CameraPose` carries one flag per part, and the interface reports an
-unproved part as unknown instead of showing it.
+The first hypothesis was that the block holds a basis and then a translation, in that order, after
+the forward vector. That was wrong: the eye position sits **before** the forward vector, at 1428.
+The two basis vectors after the forward vector are still hypotheses. The client never trusts them:
+`capture_forward` checks that the vectors are unit length and mutually perpendicular, and that the
+position is finite and inside the world bound. `CameraPose` carries one flag per part, and the
+interface reports an unproved part as unknown instead of showing it.
+
+The camera pose block stride is `0xC50`.
+
+### Game calls the client holds
+
+These come from the entity spawner of upstream pull request 46 and the world population of pull
+request 58. They are module-relative addresses, in
+[`spawn_runtime.cpp`](../Sunrise/src/client/hooks/spawn/spawn_runtime.cpp).
+
+| Name                    | RVA         | Use                                                    |
+| ----------------------- | ----------- | ------------------------------------------------------ |
+| World raycast           | `0x128E3D0` | Traces a segment against the world and reports the hit |
+| Object factory          | `0x56D990`  | Creates one object from a placement                    |
+| Object transform        | `0x559B10`  | Moves one object                                       |
+| Tag resolver            | `0x1258970` | Turns an entity tag into its definition                |
+| Placement initialize    | `0x4B2570`  | Fills one placement record                             |
+| Player component update | `0xBB0DB0`  | Per-tick call the spawner runs its work on             |
+
+The raycast signature is
+`bool(const float* up, const float* up, const float* start, const float* end, int ignoreA,
+int ignoreB, float radius, float* fraction, float* hitPoint, int* code)`. The meaning of `code` is
+**not confirmed**. It is a material index or a hit datum handle. The Debug page shows it raw and
+also tries to read it as an object handle, which is how the two can be told apart.
+
+### The object datum array
+
+| Name                | Value       | Note                                            |
+| ------------------- | ----------- | ----------------------------------------------- |
+| Descriptor          | `0x1F93420` | Module-relative                                 |
+| Base pointer offset | `0x08`      | Inside the descriptor                           |
+| Stride offset       | `0x10`      | Inside the descriptor. Its value must be `0xE0` |
+| Record size         | `0xE0`      | One object record                               |
+| Handle offset       | `0x0C`      | Inside the record. Holds the full handle        |
+
+A handle names a record at `base + (handle & 0x1FFF) * stride`. The record holds the **full**
+handle at `0x0C`, which is the index bits plus a generation counter. The physics component reports
+only the 13 index bits, so `object_record_by_index` reads the record first and takes the full
+handle from it.
 
 ## 3. What is not reachable yet
 
-| Wanted value                         | State         | Why                                                                                   |
-| ------------------------------------ | ------------- | ------------------------------------------------------------------------------------- |
-| Surface point at the crosshair       | Not reachable | The engine's own collision query has no signature yet, so no world trace can be made. |
-| Object type or name at the crosshair | Not reachable | The object datum array that maps a handle to an object is not resolved.               |
-| Health, shield, combatant state      | Not reachable | No field on the physics path is known to hold them.                                   |
-| AI state                             | Not reachable | Same as health. It sits on the object, not on the physics component.                  |
+| Wanted value                         | State     | Why                                                                        |
+| ------------------------------------ | --------- | -------------------------------------------------------------------------- |
+| Wanted value                         | State     | Note                                                                       |
+| ------------------------------------ | --------- | -------------------------------------------------------------------------- |
+| Surface point at the crosshair       | Reachable | The world raycast reports it. The Debug page shows it.                     |
+| Object record at the crosshair       | Reachable | The datum array resolves the handle. The Debug page shows the raw record.  |
+| Object type or name at the crosshair | Partly    | The type sits at `0x96` of the **definition**, not of the record.          |
+| Health, shield, combatant state      | Unknown   | No offset inside the object record is confirmed to hold them.              |
+| AI state                             | Unknown   | Same as health.                                                            |
 
-The object handle **is** known for every tracked body. The missing step is the datum array that
-turns that handle into an object pointer. Finding it in the running process is the next task for
-this area, because every field above hangs off the object.
+The object record is now readable, so health and AI state are a search inside 224 known bytes
+instead of an unbounded one. Use the `Unit state` section of the Debug page: pick a unit, read the
+record as floats, then hurt the unit and watch which lane falls.
 
 ## 4. How to research new offsets in the running game
 
@@ -108,9 +150,18 @@ The Debug page of the Sunrise menu, described in
    - `part=local`: the player position, velocity, forward vector and the state of the pose flags.
    - `part=camera`: 32 floats of the camera pose block, starting four floats before the forward
      vector, with the offset of every line.
+   - `part=target`: the picked body, with its index bits, its full handle, its object record
+     address, its distance and its position.
+   - `part=surface`: the world-trace result, with the trace code, whether that code resolved as an
+     object handle, the covered part of the segment, the distance and the hit position.
    - `part=body`: the nearest tracked bodies, with the object handle, the component address, the
      distance, the position and the velocity.
 
-To confirm the eye-position offset, stand still and write a dump. In the `part=camera` lines,
-find the float triple that is close to the player position from the `part=local` line, but about
-one body height above it. That offset is the eye position. Record the result in this document.
+### Open questions to answer with the dump
+
+1. **What does the trace code mean?** Aim at a wall and at a unit, then write a dump both times.
+   If `resolved=1` only when a unit is aimed at, the code is a hit object handle.
+2. **Where is health?** Spawn a combatant with the entity spawner, aim at it, open `Unit state`,
+   and note the record offset of a float that falls when the unit is hurt.
+3. **Are the two vectors after the forward vector really a basis?** The `part=camera` lines hold
+   32 floats around the forward vector. Turn on the spot and watch which triples turn with you.

@@ -21,7 +21,7 @@ inline constexpr std::size_t kRawReadCapacity = 256;
 /** Characters one dump line holds, including the null. */
 inline constexpr std::size_t kDumpLineCapacity = 192;
 /** Lines one dump holds. It covers the player, the camera window and the listed bodies. */
-inline constexpr std::size_t kDumpLineCount = 24;
+inline constexpr std::size_t kDumpLineCount = 28;
 
 /** One held dump line, stored with no dynamic memory. */
 using DumpLine = std::array<char, kDumpLineCapacity>;
@@ -92,14 +92,51 @@ struct TargetReport {
     std::uint32_t handleIndex{};
     /** Physics component of the picked body, for the memory view. */
     const void* component{};
+    /**
+     * Object record of the picked body, read through the game's object datum array.
+     * It is game memory the game may free, so the interface only reads it through the probe.
+     */
+    const void* object{};
+    /** Full object handle of the picked body, which is the index bits plus the generation. */
+    std::uint32_t handle{};
     /** True when one body was picked this pass. */
     bool present{};
+    /** True when the object handle named a live record in the datum array. */
+    bool objectResolved{};
+};
+
+/**
+ * What the game's own world trace reports along the camera ray.
+ *
+ * This is the real collision query the entity spawner places entities with, so it hits static
+ * geometry as well as bodies. The body pick above cannot do that.
+ */
+struct SurfaceReport {
+    /** Surface point the trace stopped at. */
+    Vector point{};
+    /** Distance from the ray origin to that point. */
+    float distance{};
+    /** Part of the traced segment covered before the trace stopped, from 0 to 1. */
+    float fraction{};
+    /**
+     * Last output of the trace call, whose meaning is not confirmed. It is a material index or a
+     * hit datum handle. `codeResolved` tells which, because a handle resolves and an index does
+     * not.
+     */
+    std::int32_t code{};
+    /** Object record the code named, when it named one. */
+    const void* codeObject{};
+    /** True when the trace reported a hit. */
+    bool present{};
+    /** True when the code resolved as an object handle. */
+    bool codeResolved{};
 };
 
 /** The whole probe result, published as one value so its parts cannot disagree. */
 struct Report {
     LocalReport local{};
     TargetReport target{};
+    SurfaceReport surface{};
     /** Point the camera ray reaches at the configured probe distance. It is not a surface hit. */
     Vector rayPoint{};
     /** Origin the ray was cast from. */
@@ -156,6 +193,21 @@ void reset() noexcept;
  * @param value Limits, clamped to the supported range.
  */
 void publish_settings(const PickSettings& value) noexcept;
+
+/**
+ * Copies bytes out of one object's datum-array record for the interface.
+ * @param handle Object handle to resolve.
+ * @param output Receives the bytes. At most one record's worth are copied.
+ * @return Bytes copied, which is zero when the handle names no live object.
+ *
+ * The record holds the object's own fields. Health, combatant state and AI state are expected to
+ * sit in it or behind a pointer in it, but which offset holds which is not known yet, so the
+ * interface shows the record raw.
+ */
+[[nodiscard]] std::size_t read_object(std::uint32_t handle, std::span<std::byte> output) noexcept;
+
+/** @return The size in bytes of one object datum-array record. */
+[[nodiscard]] std::size_t object_record_bytes() noexcept;
 
 /**
  * Copies bytes out of game memory for the interface's memory view.

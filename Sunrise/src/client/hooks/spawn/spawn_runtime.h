@@ -32,10 +32,8 @@ void uninstall() noexcept;
 [[nodiscard]] bool is_tag_resident(std::uint32_t tag) noexcept;
 [[nodiscard]] bool object_type(std::uint32_t tag, std::uint8_t& type) noexcept;
 
-[[nodiscard]] bool request(std::uint32_t tag,
-                           Origin origin,
-                           std::uint32_t amount,
-                           const Settings& settings) noexcept;
+[[nodiscard]] bool
+request(std::uint32_t tag, Origin origin, std::uint32_t amount, const Settings& settings) noexcept;
 
 [[nodiscard]] bool request_line(std::span<const std::uint32_t> tags,
                                 Origin origin,
@@ -160,5 +158,55 @@ struct PopulationStatus {
 /** Drops tracking of every placement. Entities already in the world are left alone. */
 void clear_population_tracking() noexcept;
 
+/** One result of the world trace the spawner places entities with. */
+struct SurfaceHit {
+    /** Surface point, or the segment end when the trace reported no hit. */
+    std::array<float, 3> point{};
+    /** Part of the segment the trace covered before it stopped, from 0 to 1. */
+    float fraction{1.0F};
+    /**
+     * Last output of the trace call. The spawner does not read it, so its meaning is not
+     * confirmed. It is a material index or a hit datum handle. The debug page shows it raw and
+     * also tries to read it as a handle, which is how the two can be told apart.
+     */
+    std::int32_t code{-1};
+    /** Distance from the segment start to the point. */
+    float distance{};
+};
+
+/**
+ * Traces the world along one segment, with the controlled object left out of the test.
+ * @param start Segment start in world units.
+ * @param direction Segment direction. It need not be a unit vector; it is normalized here.
+ * @param distance Segment length in world units. It must be finite and above zero.
+ * @param hit Receives the result. It is left alone when the call returns false.
+ * @return True when the trace ran and reported a hit.
+ */
+[[nodiscard]] bool trace(const std::array<float, 3>& start,
+                         const std::array<float, 3>& direction,
+                         float distance,
+                         SurfaceHit& hit) noexcept;
+
+/**
+ * Resolves one object handle through the game's object datum array.
+ * @param handle Object handle, as the physics tick and the spawner report them.
+ * @return The object record, or null when the handle names no live object.
+ *
+ * The record is game memory that the game may free at any time, so read it on the game thread
+ * and do not keep the pointer past the call that asked for it.
+ */
+[[nodiscard]] const void* object_record(std::uint32_t handle) noexcept;
+
+/**
+ * Resolves one object by its handle index bits, which is all the physics component reports.
+ * @param index Index bits of the object handle.
+ * @param handle Receives the full handle the record holds, on success.
+ * @return The object record, or null when the slot holds no live object.
+ */
+[[nodiscard]] const void* object_record_by_index(std::uint32_t index,
+                                                 std::uint32_t& handle) noexcept;
+
+/** @return The size in bytes of one object datum-array record. */
+[[nodiscard]] std::size_t object_record_bytes() noexcept;
 
 } // namespace sunrise::client::hooks::spawn

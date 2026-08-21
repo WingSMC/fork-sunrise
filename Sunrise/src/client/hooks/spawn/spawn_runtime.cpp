@@ -216,6 +216,45 @@ void reset_storage(PlacementStorage& storage) noexcept {
     return safe_read(object + kObjectHandleOffset, live) && live == handle ? object : nullptr;
 }
 
+[[nodiscard]] bool trace_segment(const std::array<float, 3>& start,
+                                 const std::array<float, 3>& end,
+                                 std::array<float, 3>& point,
+                                 float& fraction,
+                                 std::int32_t& material) noexcept {
+    if (g_raycast == nullptr) {
+        return false;
+    }
+    std::array<float, 4> up{0.0F, 0.0F, 1.0F, 0.0F};
+    std::array<float, 4> from{start[0], start[1], start[2], 0.0F};
+    std::array<float, 4> to{end[0], end[1], end[2], 0.0F};
+    std::array<float, 4> hit = to;
+    float reached = 1.0F;
+    std::int32_t code = -1;
+    std::uint32_t controlled = kInvalidDatum;
+    (void)teleport::current_controlled_handle(controlled);
+    const std::int32_t ignored =
+        controlled == kInvalidDatum ? -1 : static_cast<std::int32_t>(controlled);
+    bool result = false;
+    __try {
+        result = g_raycast(up.data(),
+                           up.data(),
+                           from.data(),
+                           to.data(),
+                           ignored,
+                           ignored,
+                           0.0F,
+                           &reached,
+                           hit.data(),
+                           &code);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        result = false;
+    }
+    point = {hit[0], hit[1], hit[2]};
+    fraction = reached;
+    material = code;
+    return result;
+}
+
 [[nodiscard]] bool needs_activation(std::uint32_t tag) noexcept {
     if (g_resolver == nullptr) {
         return false;
@@ -305,38 +344,15 @@ void service_activations() noexcept {
                                  const std::array<float, 3>& camera,
                                  const std::array<float, 3>& forward,
                                  std::array<float, 3>& output) noexcept {
-    if (g_raycast == nullptr || !std::isfinite(distance) || distance <= 0.0F) {
+    if (!std::isfinite(distance) || distance <= 0.0F) {
         return false;
     }
-    std::array<float, 4> up{0.0F, 0.0F, 1.0F, 0.0F};
-    std::array<float, 4> start{camera[0], camera[1], camera[2], 0.0F};
-    std::array<float, 4> end{camera[0] + forward[0] * distance,
-                             camera[1] + forward[1] * distance,
-                             camera[2] + forward[2] * distance,
-                             0.0F};
-    std::array<float, 4> hit = end;
+    const std::array<float, 3> end{camera[0] + forward[0] * distance,
+                                   camera[1] + forward[1] * distance,
+                                   camera[2] + forward[2] * distance};
     float fraction = 1.0F;
     std::int32_t material = -1;
-    std::uint32_t controlled = kInvalidDatum;
-    (void)teleport::current_controlled_handle(controlled);
-    const std::int32_t ignored =
-        controlled == kInvalidDatum ? -1 : static_cast<std::int32_t>(controlled);
-    bool result = false;
-    __try {
-        result = g_raycast(up.data(),
-                           up.data(),
-                           start.data(),
-                           end.data(),
-                           ignored,
-                           ignored,
-                           0.0F,
-                           &fraction,
-                           hit.data(),
-                           &material);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        result = false;
-    }
-    output = {hit[0], hit[1], hit[2]};
+    const bool result = trace_segment(camera, end, output, fraction, material);
     return result;
 }
 
@@ -507,38 +523,18 @@ void poll_shortcuts() noexcept {
  */
 [[nodiscard]] bool ground_below(const std::array<float, 3>& candidate,
                                 std::array<float, 3>& output) noexcept {
-    if (g_raycast == nullptr) {
-        return false;
-    }
-    std::array<float, 4> up{0.0F, 0.0F, 1.0F, 0.0F};
-    std::array<float, 4> start{candidate[0], candidate[1], candidate[2] + kGroundProbeUp, 0.0F};
-    std::array<float, 4> end{candidate[0], candidate[1], candidate[2] - kGroundProbeDown, 0.0F};
-    std::array<float, 4> hit = end;
+    const std::array<float, 3> start{candidate[0], candidate[1], candidate[2] + kGroundProbeUp};
+    const std::array<float, 3> end{candidate[0], candidate[1], candidate[2] - kGroundProbeDown};
+    std::array<float, 3> point{};
     float fraction = 1.0F;
     std::int32_t material = -1;
-    std::uint32_t controlled = kInvalidDatum;
-    (void)teleport::current_controlled_handle(controlled);
-    const std::int32_t ignored =
-        controlled == kInvalidDatum ? -1 : static_cast<std::int32_t>(controlled);
-    bool result = false;
-    __try {
-        result = g_raycast(up.data(),
-                           up.data(),
-                           start.data(),
-                           end.data(),
-                           ignored,
-                           ignored,
-                           0.0F,
-                           &fraction,
-                           hit.data(),
-                           &material);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        result = false;
-    }
-    if (!result || !std::isfinite(hit[0]) || !std::isfinite(hit[1]) || !std::isfinite(hit[2])) {
+    if (!trace_segment(start, end, point, fraction, material)) {
         return false;
     }
-    output = {hit[0], hit[1], hit[2]};
+    if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2])) {
+        return false;
+    }
+    output = point;
     return true;
 }
 
@@ -1098,6 +1094,77 @@ std::size_t population_source_count() noexcept {
     const std::size_t result = g_populationTagCount;
     ReleaseSRWLockShared(&g_populationLock);
     return result;
+}
+
+bool trace(const std::array<float, 3>& start,
+           const std::array<float, 3>& direction,
+           float distance,
+           SurfaceHit& hit) noexcept {
+    if (!g_installed.load(std::memory_order_acquire) || !std::isfinite(distance)
+        || distance <= 0.0F) {
+        return false;
+    }
+    const float length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1]
+                                   + direction[2] * direction[2]);
+    if (!std::isfinite(length) || length <= 1.0e-6F) {
+        return false;
+    }
+    const float scale = distance / length;
+    const std::array<float, 3> end{start[0] + direction[0] * scale,
+                                   start[1] + direction[1] * scale,
+                                   start[2] + direction[2] * scale};
+    std::array<float, 3> point{};
+    float fraction = 1.0F;
+    std::int32_t code = -1;
+    if (!trace_segment(start, end, point, fraction, code)) {
+        return false;
+    }
+    if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2])) {
+        return false;
+    }
+    const float dx = point[0] - start[0];
+    const float dy = point[1] - start[1];
+    const float dz = point[2] - start[2];
+    hit.point = point;
+    hit.fraction = fraction;
+    hit.code = code;
+    hit.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return true;
+}
+
+const void* object_record(std::uint32_t handle) noexcept {
+    if (!g_installed.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
+    return resolve_object(handle);
+}
+
+const void* object_record_by_index(std::uint32_t index, std::uint32_t& handle) noexcept {
+    handle = kInvalidDatum;
+    if (!g_installed.load(std::memory_order_acquire) || g_gameModule == nullptr) {
+        return nullptr;
+    }
+    std::byte* const descriptor =
+        reinterpret_cast<std::byte*>(g_gameModule) + kObjectDatumDescriptorRva;
+    std::byte* base = nullptr;
+    std::uint32_t stride = 0;
+    if (!safe_read(descriptor + kObjectDatumBaseOffset, base)
+        || !safe_read(descriptor + kObjectDatumStrideOffset, stride) || base == nullptr
+        || stride != kObjectDatumBytes) {
+        return nullptr;
+    }
+    std::byte* const record = base + (index & 0x1FFFU) * stride;
+    std::uint32_t live = kInvalidDatum;
+    if (!safe_read(record + kObjectHandleOffset, live) || live == kInvalidDatum
+        || (live & 0x1FFFU) != (index & 0x1FFFU)) {
+        return nullptr;
+    }
+    handle = live;
+    return record;
+}
+
+std::size_t object_record_bytes() noexcept {
+    return kObjectDatumBytes;
 }
 
 void clear_population_tracking() noexcept {
