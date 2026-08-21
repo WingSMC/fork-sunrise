@@ -50,9 +50,11 @@ Sunrise organizes UI panels using a modular registry (`ui_module_registry.h`):
 
 ### Core modules
 
+- **HUD controls (`ui/modules/hud/`)**:
+  - Registers the `core.hud` page for overlay visibility controls.
 - **Logs viewer (`ui/modules/logs/`)**:
   - Displays real-time log messages from the Core ring buffer.
-  - Filters messages by channel (`core`, `client`, `server`, `bap`, `gameplay`, `state`, `steam`).
+  - Filters messages by channel (`core`, `client`, `state`, `server`, `middleware`).
   - Filters messages by log level (`debug`, `info`, `warn`, `error`).
   - Supports live string search and pause/resume toggles.
 
@@ -121,7 +123,7 @@ one atomic read per component.
 
 ## 4. Input handling and cursor management
 
-When the user opens the Sunrise menu (default key: `F2` or `Insert`):
+When the user opens the Sunrise menu (default key: `Insert`):
 
 - **Window message hook**: Intercepts `WM_KEYDOWN`, `WM_KEYUP`, `WM_MOUSEMOVE`, and mouse clicks to feed Dear ImGui.
 - **Input routing**: Suppresses game keyboard and mouse inputs so the game does not react while interacting with UI menus.
