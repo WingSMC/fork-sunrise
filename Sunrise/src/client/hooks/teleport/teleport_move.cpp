@@ -63,6 +63,8 @@ CameraSingleton g_cameraSingleton{};
 
 /** Written by the camera hook and read by the physics hook. Both run on the same thread. */
 std::array<float, kVectorLanes> g_forward{};
+/** The camera eye position, read beside the forward vector on the same frame. */
+std::array<float, kVectorLanes> g_cameraPosition{};
 /** The whole pose read beside the forward vector, published under the same sequence guard. */
 CameraPose g_pose{};
 /** Odd while the pose is being written, so a reader that sees one retries. */
@@ -390,6 +392,52 @@ void clear_targets() noexcept {
     g_cameraPlayer.store(kInvalidHandle, std::memory_order_relaxed);
 }
 
+bool is_controlled_object(const void* object) noexcept {
+    if (object == nullptr || g_controlledHandle == nullptr) {
+        return false;
+    }
+    std::uint32_t controlled = kInvalidHandle;
+    std::uint32_t candidate = kInvalidHandle;
+    g_controlledHandle(&controlled);
+    constexpr std::size_t kObjectHandle = 0x2C;
+    return controlled != kInvalidHandle
+           && read_at(static_cast<const std::byte*>(object) + kObjectHandle, candidate)
+           && (controlled & kHandleIndexMask) == (candidate & kHandleIndexMask);
+}
+
+bool current_position(std::array<float, 3>& output) noexcept {
+    output = {};
+    std::byte* const physics = g_playerComponent.load(std::memory_order_acquire);
+    if (physics == nullptr || g_controlledHandle == nullptr || !owns_player(physics)) {
+        return false;
+    }
+    std::byte* const body = body_of(physics);
+    return body != nullptr && read_at(body + kBodyPositionX, output);
+}
+
+bool current_controlled_handle(std::uint32_t& output) noexcept {
+    output = kInvalidHandle;
+    if (g_controlledHandle == nullptr) {
+        return false;
+    }
+    g_controlledHandle(&output);
+    return output != kInvalidHandle;
+}
+
+bool current_camera_pose(std::array<float, 3>& position, std::array<float, 3>& forward) noexcept {
+    position = g_cameraPosition;
+    forward = g_forward;
+    if (!g_forwardValid.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (std::size_t lane = 0; lane < kVectorLanes; ++lane) {
+        if (!std::isfinite(position[lane]) || !std::isfinite(forward[lane])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /** Publishes the camera forward vector for the physics tick that follows. */
 void capture_forward(std::uint32_t playerIndex) noexcept {
     if (playerIndex == kInvalidHandle || g_cameraSingleton == nullptr) {
@@ -401,23 +449,25 @@ void capture_forward(std::uint32_t playerIndex) noexcept {
     }
     std::byte* const block = camera + (kCameraBlockStride * playerIndex);
     std::array<float, kVectorLanes> forward{};
-    if (!read_at(block + kCameraForwardX, forward)) {
+    std::array<float, kVectorLanes> position{};
+    if (!read_at(block + kCameraForwardX, forward)
+        || !read_at(block + kCameraPositionX, position)) {
         return;
     }
     g_forward = forward;
+    g_cameraPosition = position;
     g_forwardValid.store(true, std::memory_order_release);
     g_cameraPlayer.store(playerIndex, std::memory_order_relaxed);
 
-    // The rest of the block is a hypothesis, so it is read after the confirmed vector and every
-    // field carries the flag that says what was proved.
+    // The eye position is confirmed: the entity spawner places objects with it. The two vectors
+    // after the forward vector are still a hypothesis, so each carries the flag it proved.
     CameraPose pose{};
     pose.forward = forward;
     pose.forwardValid = true;
+    pose.position = position;
+    pose.positionValid = inside_world(position);
     if (read_at(block + kCameraLeftX, pose.left) && read_at(block + kCameraUpX, pose.up)) {
         pose.basisValid = basis_is_orthonormal(pose);
-    }
-    if (read_at(block + kCameraPositionX, pose.position)) {
-        pose.positionValid = pose.basisValid && inside_world(pose.position);
     }
     if (!pose.basisValid) {
         pose.left = {};
@@ -459,21 +509,25 @@ void poll_request() noexcept {
 
 /** Moves the local player if a request is pending and this component owns them. */
 void apply_pending(void* component) noexcept {
-    if (!g_active.load(std::memory_order_relaxed) || component == nullptr
-        || g_controlledHandle == nullptr) {
-        return;
-    }
-    const bool requested = g_requested.load(std::memory_order_acquire);
-    // The ownership test runs per component, so it is paid only while a request is open or until
-    // the player's component is known. Once it is known, an ordinary tick costs two atomic reads.
-    if (!requested && g_playerComponent.load(std::memory_order_relaxed) != nullptr) {
-        return;
-    }
-    if (!owns_player(static_cast<std::byte*>(component))) {
+    if (component == nullptr || g_controlledHandle == nullptr) {
         return;
     }
     std::byte* const physics = static_cast<std::byte*>(component);
-    g_playerComponent.store(physics, std::memory_order_relaxed);
+    std::byte* const cached = g_playerComponent.load(std::memory_order_relaxed);
+    if (cached != physics) {
+        if (cached != nullptr && owns_player(cached)) {
+            return;
+        }
+        g_playerComponent.store(nullptr, std::memory_order_relaxed);
+        if (!owns_player(physics)) {
+            return;
+        }
+        g_playerComponent.store(physics, std::memory_order_relaxed);
+    }
+    if (!g_active.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const bool requested = g_requested.load(std::memory_order_acquire);
     if (!requested || !g_forwardValid.load(std::memory_order_acquire)) {
         return;
     }

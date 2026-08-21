@@ -23,17 +23,18 @@ inline constexpr std::uint32_t kInvalidHandle = 0xFFFFFFFF;
 
 /** Camera pose block stride, indexed by player. Its vectors are plain floats. */
 inline constexpr std::size_t kCameraBlockStride = 0xC50;
+/** Camera eye position. It sits ahead of the forward vector in the block. */
+inline constexpr std::size_t kCameraPositionX = 1428;
 /** Camera forward vector. Its default is (1,0,0), so the basis is X forward, Z up. */
 inline constexpr std::size_t kCameraForwardX = 1468;
 
 /**
- * The three vectors that follow the forward vector, read as a hypothesis of one pose block that
- * stores a basis and then a translation. Nothing depends on them: every read is validated, and a
- * failed check is reported as unproved instead of being shown.
+ * The two vectors that follow the forward vector, read as a hypothesis that the block holds a
+ * whole basis. Nothing depends on them: every read is validated, and a failed check is reported
+ * as unproved instead of being shown.
  */
 inline constexpr std::size_t kCameraLeftX = kCameraForwardX + (sizeof(float) * kVectorLanes);
 inline constexpr std::size_t kCameraUpX = kCameraLeftX + (sizeof(float) * kVectorLanes);
-inline constexpr std::size_t kCameraPositionX = kCameraUpX + (sizeof(float) * kVectorLanes);
 
 /** Longest a basis vector may be off unit length before the basis is rejected. */
 inline constexpr float kBasisLengthTolerance = 0.02F;
