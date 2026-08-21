@@ -65,6 +65,42 @@ Sunrise organizes UI panels using a modular registry (`ui_module_registry.h`):
 - **Player panel (`client/ui/player/`)**:
   - Toggles infinite ammo and removes reload delays.
   - Disables inactivity AFK kick timers.
+- **Debug panel (`client/ui/debug/`)**: see section 3.1.
+
+### 3.1 Debug panel
+
+The Debug panel reports what the client can prove about the local player and about what the
+camera points at. It reads from the world probe (`client/world/world_probe.cpp`).
+
+**Data source.** The physics sync hook reports every physics component it runs for. The probe
+keeps the last position, velocity and object handle of each one in a fixed table of 512 slots. An
+entry that no tick reports for 500 ms is dropped. The probe reads only while the Debug page is
+open: the page renews a scan request every frame, and without that request the physics tick costs
+one atomic read per component.
+
+**Sections.**
+
+| Section             | Content                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Player position     | World position, velocity, speed, camera forward vector, yaw and pitch, and the eye position when the pose read is proved.       |
+| Player state        | In-world flag, controlled object handle, physics component address, activity name, session, region, bubble and slice-set state. |
+| Crosshair ray       | Ray origin, and the point the ray reaches at a chosen probe distance.                                                           |
+| Target at crosshair | The picked body: object handle, world position, distance, distance off the ray, angle, velocity, speed and component address.   |
+| Unit state          | States that health, combatant state and AI state are not reported yet, and why.                                                 |
+| Memory view         | Raw bytes of the player's or the target's physics component, as hexadecimal and as floats.                                      |
+| Probe               | Tracked and considered body counts, pick radius, pick range, and the log dump button.                                           |
+
+**Limits you must keep in mind.**
+
+- The pick is **not** a collision query. It selects the body nearest the camera ray inside the
+  pick radius. The engine's own world trace has no signature yet, so the reported ray point is the
+  ray at a set distance and not a surface hit.
+- Only bodies that the physics tick reports can be picked. Map geometry has no such body and never
+  appears.
+- The ray starts at the camera eye only when the eye-position read passes its checks. Otherwise it
+  starts at the player body, and the page says which origin was used.
+- Health, combatant state and AI state need the object datum array, which is not resolved yet. See
+  [`reverse-engineering-notes.md`](reverse-engineering-notes.md).
 
 ### Server modules
 
@@ -86,5 +122,6 @@ When the user opens the Sunrise menu (default key: `F2` or `Insert`):
 ## 5. Wine and Proton compatibility
 
 Sunrise supports running on Linux via Wine and Valve's Proton:
+
 - **`wine_compat.h`**: Detects Wine runtime environments.
 - **DirectX translation**: Adjusts swap chain presentation and viewport synchronization when DXVK or VKD3D-Proton is active.

@@ -14,6 +14,7 @@
 #include "../../../core/logging/log.h"
 #include "../../hooking/detour.h"
 #include "../../player/player_position.h"
+#include "../../world/world_probe.h"
 #include "../bootflow/bootflow_hook_lifecycle.h"
 #include "../fly/fly.h"
 #include "../polled_input/runtime.h"
@@ -84,6 +85,8 @@ std::int64_t __fastcall camera_transform(std::uint32_t playerIndex) noexcept {
     // Read here, not on the physics tick: that tick stops for a player who is standing still.
     hooks::fly::poll_toggle();
     client::player::position::poll();
+    // Runs after the position poll, so the probe's pass reads the position published this frame.
+    client::world::poll();
     hooks::bootflow::poll_world_step();
     return result;
 }
@@ -103,6 +106,8 @@ std::int64_t __fastcall physics_sync(std::byte* component, std::byte* outFlags) 
     hooks::fly::apply(component);
     // This tick is the only one that sees every component, so it is where the player's is found.
     client::player::position::observe(component);
+    // The probe wants every component, not only the player's, so it observes beside the position.
+    client::world::observe(component);
     const PhysicsSync next = original<PhysicsSync>(kPhysicsSlot);
     return next != nullptr ? next(component, outFlags) : 0;
 }

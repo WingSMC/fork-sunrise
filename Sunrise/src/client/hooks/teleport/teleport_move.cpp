@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -62,6 +63,12 @@ CameraSingleton g_cameraSingleton{};
 
 /** Written by the camera hook and read by the physics hook. Both run on the same thread. */
 std::array<float, kVectorLanes> g_forward{};
+/** The whole pose read beside the forward vector, published under the same sequence guard. */
+CameraPose g_pose{};
+/** Odd while the pose is being written, so a reader that sees one retries. */
+std::atomic_uint32_t g_poseSequence{0};
+/** Player the camera transform last ran for, so a later read can find the same pose block. */
+std::atomic_uint32_t g_cameraPlayer{kInvalidHandle};
 
 /**
  * Reads one value out of game memory without faulting on a torn pointer.
@@ -76,6 +83,43 @@ template <typename T> [[nodiscard]] bool read_at(const std::byte* address, T& va
     SIZE_T read = 0;
     return ReadProcessMemory(GetCurrentProcess(), address, &value, sizeof value, &read) != FALSE
            && read == sizeof value;
+}
+
+/** @param value Three lanes. @return Their dot product with themselves. */
+[[nodiscard]] float square_length(const Vector& value) noexcept {
+    return (value[0] * value[0]) + (value[1] * value[1]) + (value[2] * value[2]);
+}
+
+/** @return The dot product of two vectors. */
+[[nodiscard]] float dot(const Vector& left, const Vector& right) noexcept {
+    return (left[0] * right[0]) + (left[1] * right[1]) + (left[2] * right[2]);
+}
+
+/** @param value Three lanes. @return True when all three are finite and inside the world bound. */
+[[nodiscard]] bool inside_world(const Vector& value) noexcept {
+    for (const float lane : value) {
+        if (!std::isfinite(lane) || std::fabs(lane) > kWorldBound) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Checks the three candidate basis vectors.
+ * @param pose Pose holding them.
+ * @return True when each is unit length and each pair is perpendicular.
+ */
+[[nodiscard]] bool basis_is_orthonormal(const CameraPose& pose) noexcept {
+    const std::array<const Vector*, kVectorLanes> rows{&pose.forward, &pose.left, &pose.up};
+    for (const Vector* row : rows) {
+        if (!inside_world(*row) || std::fabs(square_length(*row) - 1.0F) > kBasisLengthTolerance) {
+            return false;
+        }
+    }
+    return std::fabs(dot(pose.forward, pose.left)) <= kBasisSquareTolerance
+           && std::fabs(dot(pose.forward, pose.up)) <= kBasisSquareTolerance
+           && std::fabs(dot(pose.left, pose.up)) <= kBasisSquareTolerance;
 }
 
 /**
@@ -343,6 +387,7 @@ void clear_targets() noexcept {
     g_requestAge.store(0, std::memory_order_relaxed);
     g_active.store(false, std::memory_order_relaxed);
     g_playerComponent.store(nullptr, std::memory_order_relaxed);
+    g_cameraPlayer.store(kInvalidHandle, std::memory_order_relaxed);
 }
 
 /** Publishes the camera forward vector for the physics tick that follows. */
@@ -354,12 +399,36 @@ void capture_forward(std::uint32_t playerIndex) noexcept {
     if (camera == nullptr) {
         return;
     }
+    std::byte* const block = camera + (kCameraBlockStride * playerIndex);
     std::array<float, kVectorLanes> forward{};
-    if (!read_at(camera + kCameraBlockStride * playerIndex + kCameraForwardX, forward)) {
+    if (!read_at(block + kCameraForwardX, forward)) {
         return;
     }
     g_forward = forward;
     g_forwardValid.store(true, std::memory_order_release);
+    g_cameraPlayer.store(playerIndex, std::memory_order_relaxed);
+
+    // The rest of the block is a hypothesis, so it is read after the confirmed vector and every
+    // field carries the flag that says what was proved.
+    CameraPose pose{};
+    pose.forward = forward;
+    pose.forwardValid = true;
+    if (read_at(block + kCameraLeftX, pose.left) && read_at(block + kCameraUpX, pose.up)) {
+        pose.basisValid = basis_is_orthonormal(pose);
+    }
+    if (read_at(block + kCameraPositionX, pose.position)) {
+        pose.positionValid = pose.basisValid && inside_world(pose.position);
+    }
+    if (!pose.basisValid) {
+        pose.left = {};
+        pose.up = {};
+    }
+    if (!pose.positionValid) {
+        pose.position = {};
+    }
+    g_poseSequence.fetch_add(1, std::memory_order_acq_rel);
+    g_pose = pose;
+    g_poseSequence.fetch_add(1, std::memory_order_release);
 }
 
 /** Latches one teleport request if the bound key went down this frame. */
@@ -487,6 +556,77 @@ bool camera_forward(Vector& forward) noexcept {
     }
     forward = g_forward;
     return true;
+}
+
+/** Reports the whole camera pose published this frame. */
+bool camera_pose(CameraPose& pose) noexcept {
+    pose = {};
+    if (!g_forwardValid.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (;;) {
+        const std::uint32_t before = g_poseSequence.load(std::memory_order_acquire);
+        if ((before & 1U) != 0U) {
+            continue;
+        }
+        pose = g_pose;
+        if (g_poseSequence.load(std::memory_order_acquire) == before) {
+            break;
+        }
+    }
+    return pose.forwardValid;
+}
+
+/** Reads the object handle a physics component drives. */
+bool object_handle(void* component, std::uint32_t& handleIndex) noexcept {
+    handleIndex = 0;
+    if (component == nullptr) {
+        return false;
+    }
+    std::uint16_t owner = 0;
+    if (!read_at(static_cast<std::byte*>(component) + kPhysicsComponentObjectHandle, owner)) {
+        return false;
+    }
+    handleIndex = static_cast<std::uint32_t>(owner) & kHandleIndexMask;
+    return true;
+}
+
+/** Reports the object the local player controls. */
+bool controlled_object(std::uint32_t& handleIndex) noexcept {
+    handleIndex = 0;
+    if (g_controlledHandle == nullptr) {
+        return false;
+    }
+    std::uint32_t controlled = kInvalidHandle;
+    g_controlledHandle(&controlled);
+    if (controlled == kInvalidHandle) {
+        return false;
+    }
+    handleIndex = controlled & kHandleIndexMask;
+    return true;
+}
+
+/** @return The offset of the confirmed forward vector inside the camera pose block. */
+std::size_t camera_forward_offset() noexcept {
+    return kCameraForwardX;
+}
+
+/** Reads floats out of the camera pose block of the player the camera transform last ran for. */
+bool read_camera_block(std::size_t byteOffset, std::span<float> output) noexcept {
+    const std::uint32_t player = g_cameraPlayer.load(std::memory_order_relaxed);
+    if (player == kInvalidHandle || g_cameraSingleton == nullptr || output.empty()
+        || byteOffset + (output.size() * sizeof(float)) > kCameraBlockStride) {
+        return false;
+    }
+    std::byte* const camera = g_cameraSingleton();
+    if (camera == nullptr) {
+        return false;
+    }
+    std::byte* const source = camera + (kCameraBlockStride * player) + byteOffset;
+    SIZE_T read = 0;
+    const SIZE_T size = output.size() * sizeof(float);
+    return ReadProcessMemory(GetCurrentProcess(), source, output.data(), size, &read) != FALSE
+           && read == size;
 }
 
 } // namespace sunrise::client::hooks::teleport

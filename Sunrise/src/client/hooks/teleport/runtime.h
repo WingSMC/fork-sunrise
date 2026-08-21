@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace sunrise::client::hooks::teleport {
 
@@ -13,6 +14,30 @@ inline constexpr std::size_t kVerticalLane = 2;
 
 /** One world-space vector as the game stores it. */
 using Vector = std::array<float, kVectorLanes>;
+
+/**
+ * One camera pose, read from the pose block of the player the camera transform ran for.
+ *
+ * Only `forward` is confirmed. The three vectors that follow it are read as a hypothesis: a pose
+ * block that stores a basis and then a translation. Each flag says what the read proved, so a
+ * caller never presents an unproved field as a fact.
+ */
+struct CameraPose {
+    /** Confirmed. Its default is (1,0,0), so the basis is X forward, Z up. */
+    Vector forward{};
+    /** Second basis vector. Valid only with `basisValid`. */
+    Vector left{};
+    /** Third basis vector. Valid only with `basisValid`. */
+    Vector up{};
+    /** Candidate eye position. Valid only with `positionValid`. */
+    Vector position{};
+    /** True when the camera transform has published a forward vector. */
+    bool forwardValid{};
+    /** True when all three vectors are unit length and mutually perpendicular. */
+    bool basisValid{};
+    /** True when the fourth vector is finite and inside the world bound. */
+    bool positionValid{};
+};
 
 /** Writes the local player's controlled-object handle, or the invalid sentinel. */
 using ControlledHandle = std::uint32_t* (*)(std::uint32_t*);
@@ -132,5 +157,39 @@ void apply_pending(void* component) noexcept;
  * @return True once the camera hook has published one.
  */
 [[nodiscard]] bool camera_forward(Vector& forward) noexcept;
+
+/**
+ * Reports the whole camera pose published this frame, with one flag per proved part.
+ * @param pose Receives the vectors and their flags. Cleared first.
+ * @return True once the camera hook has published a forward vector.
+ */
+[[nodiscard]] bool camera_pose(CameraPose& pose) noexcept;
+
+/**
+ * Reads the object handle a physics component drives.
+ * @param component Physics component.
+ * @param handleIndex Receives the index bits, which name one object.
+ * @return True when the handle was read.
+ */
+[[nodiscard]] bool object_handle(void* component, std::uint32_t& handleIndex) noexcept;
+
+/**
+ * Reports the object the local player controls.
+ * @param handleIndex Receives the index bits of that object.
+ * @return True while the player controls one and the getter is published.
+ */
+[[nodiscard]] bool controlled_object(std::uint32_t& handleIndex) noexcept;
+
+/** @return The offset of the confirmed forward vector inside the camera pose block. */
+[[nodiscard]] std::size_t camera_forward_offset() noexcept;
+
+/**
+ * Reads floats out of the camera pose block of the player the camera transform last ran for.
+ * It exists for the diagnostic dump that confirms which offset holds which vector.
+ * @param byteOffset Offset inside that block.
+ * @param output Receives the floats. Nothing is written when the read fails.
+ * @return True when the whole span was copied.
+ */
+[[nodiscard]] bool read_camera_block(std::size_t byteOffset, std::span<float> output) noexcept;
 
 } // namespace sunrise::client::hooks::teleport

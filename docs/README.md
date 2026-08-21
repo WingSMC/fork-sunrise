@@ -36,6 +36,10 @@ graph TD
 - [Steam compatibility shim](steam-shim.md)
   Details the replacement `steam_api64.dll`, exported functions, virtual method tables, and callback dispatch queue.
 
+- [Reverse engineering notes](reverse-engineering-notes.md)
+  Records the confirmed and unconfirmed game memory offsets, states that the shipped executable is
+  packed, and explains how to research new offsets in the running game.
+
 - [User interface and diagnostics](ui-and-diagnostics.md)
   Describes the embedded Dear ImGui overlay, HUD status widgets, real-time log viewer, and Wine/Proton compatibility.
 
