@@ -40,6 +40,8 @@ constexpr std::size_t kViewBytes = 128;
 constexpr std::size_t kViewColumns = 16;
 /** Largest offset the memory view starts at. It keeps the read inside one object. */
 constexpr int kMaximumViewOffset = 4096;
+/** Height of the dump view, in authored pixels. It holds about ten lines. */
+constexpr float kDumpViewHeight = 200.0F;
 
 /** Offset the memory view starts at, held for the session only. */
 int g_viewOffset = 0;
@@ -273,6 +275,42 @@ void draw_memory_view(const world::Report& report) noexcept {
     }
 }
 
+/**
+ * Draws the last dump, and offers it as one block of text for the clipboard.
+ *
+ * The dump is shown here because the shipped log level for the client channel is `warn`, which
+ * drops the log copy. This view does not depend on that level.
+ */
+void draw_dump() noexcept {
+    std::array<world::DumpLine, world::kDumpLineCount> lines{};
+    const std::size_t held = world::dump_lines(lines);
+    if (held == 0) {
+        return;
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Copy the dump")) {
+        std::array<char, world::kDumpLineCount * world::kDumpLineCapacity> block{};
+        std::size_t length = 0;
+        for (std::size_t index = 0; index < held; ++index) {
+            const int written = std::snprintf(
+                block.data() + length, block.size() - length, "%s\n", lines[index].data());
+            if (written <= 0) {
+                break;
+            }
+            length += static_cast<std::size_t>(written);
+        }
+        ImGui::SetClipboardText(block.data());
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu lines", held);
+    if (ImGui::BeginChild("dump", ImVec2(0.0F, kDumpViewHeight), ImGuiChildFlags_Borders)) {
+        for (std::size_t index = 0; index < held; ++index) {
+            ImGui::TextUnformatted(lines[index].data());
+        }
+    }
+    ImGui::EndChild();
+}
+
 /** Draws the pick limits and the probe's own counters. */
 void draw_probe(const world::Report& report, world::PickSettings& limits, bool& changed) noexcept {
     ImGui::TextUnformatted("Probe");
@@ -296,10 +334,15 @@ void draw_probe(const world::Report& report, world::PickSettings& limits, bool& 
         changed = true;
     }
     if (ImGui::Button("Write a log dump")) {
-        world::log_dump();
+        world::request_dump();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Writes the camera block, the player and the nearest bodies to the log.");
+    if (world::dump_pending()) {
+        ImGui::TextDisabled("Waiting for the next game tick.");
+    } else {
+        ImGui::TextDisabled("Reads the camera block, the player and the nearest bodies.");
+    }
+    draw_dump();
 }
 
 } // namespace

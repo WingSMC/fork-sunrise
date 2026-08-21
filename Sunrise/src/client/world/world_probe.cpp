@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string_view>
 
 #include "../../core/logging/log.h"
@@ -72,6 +73,15 @@ std::atomic_uint64_t g_scanDeadline{0};
 std::atomic<float> g_radius{kDefaultPickRadius};
 std::atomic<float> g_range{kDefaultPickRange};
 std::atomic<float> g_probeDistance{kDefaultPickRange};
+
+/** Set by the interface and cleared by the frame poll that runs the dump. */
+std::atomic_bool g_dumpRequested{false};
+/** Odd while the dump buffer is being written, so a reader that sees one retries. */
+std::atomic_uint32_t g_dumpSequence{0};
+/** The last dump, held because the shipped client log level drops the log copy. */
+std::array<DumpLine, kDumpLineCount> g_dumpLines{};
+/** Lines the last dump wrote, at most the buffer's capacity. */
+std::size_t g_dumpHeld{};
 
 /** @return True while a scan request is still in force. */
 [[nodiscard]] bool scanning(std::uint64_t now) noexcept {
@@ -246,7 +256,17 @@ void publish(const Report& report) noexcept {
 
 /** Writes one log line on the client channel. @param text Line to write. */
 void write_line(std::string_view text) noexcept {
+    // The log copy is dropped on a normal run, because the shipped level for this channel is
+    // `warn`. The dump buffer is what the interface shows, so it is always written.
     core::log::write(core::log::Channel::client, core::log::Level::info, text);
+    if (g_dumpHeld >= kDumpLineCount) {
+        return;
+    }
+    DumpLine& line = g_dumpLines[g_dumpHeld];
+    line = {};
+    const std::size_t length = std::min(text.size(), kDumpLineCapacity - 1);
+    std::memcpy(line.data(), text.data(), length);
+    ++g_dumpHeld;
 }
 
 /** Logs the camera pose block window, which is what confirms the eye-position offset. */
@@ -360,6 +380,18 @@ void log_bodies(const Report& report) noexcept {
     }
 }
 
+/** Runs the dump the interface asked for, on the thread that owns the body table. */
+void run_dump(const Report& report) noexcept {
+    g_dumpSequence.fetch_add(1, std::memory_order_acq_rel);
+    g_dumpHeld = 0;
+    write_line("ev=world_probe stage=dump result=begin");
+    log_local(report);
+    log_camera_window();
+    log_bodies(report);
+    write_line("ev=world_probe stage=dump result=end");
+    g_dumpSequence.fetch_add(1, std::memory_order_release);
+}
+
 } // namespace
 
 /** Asks the probe to read for the next interval. */
@@ -406,6 +438,10 @@ void poll() noexcept {
     report.local = read_local();
     pick(report, now);
     publish(report);
+    // The dump runs here, after the pass it describes, so it reports the values the page shows.
+    if (g_dumpRequested.exchange(false, std::memory_order_acq_rel)) {
+        run_dump(report);
+    }
 }
 
 /** Drops the table and the published report. */
@@ -462,14 +498,38 @@ std::size_t read_raw(const void* address, std::span<std::byte> output) noexcept 
     return static_cast<std::size_t>(read);
 }
 
-/** Writes one diagnostic dump to the client log. */
-void log_dump() noexcept {
-    const Report report = snapshot();
-    write_line("ev=world_probe stage=dump result=begin");
-    log_local(report);
-    log_camera_window();
-    log_bodies(report);
-    write_line("ev=world_probe stage=dump result=end");
+/** Asks for one diagnostic dump. */
+void request_dump() noexcept {
+    // The scan is renewed here too, so the dump still runs when the request lapsed this frame.
+    request_scan();
+    g_dumpRequested.store(true, std::memory_order_release);
+}
+
+/** @return True while a dump is asked for and has not run yet. */
+bool dump_pending() noexcept {
+    return g_dumpRequested.load(std::memory_order_acquire);
+}
+
+/** Copies the last dump out for display. */
+std::size_t dump_lines(std::span<DumpLine> output) noexcept {
+    if (output.empty()) {
+        return 0;
+    }
+    std::size_t held = 0;
+    for (;;) {
+        const std::uint32_t before = g_dumpSequence.load(std::memory_order_acquire);
+        if ((before & 1U) != 0U) {
+            continue;
+        }
+        held = std::min(g_dumpHeld, output.size());
+        for (std::size_t index = 0; index < held; ++index) {
+            output[index] = g_dumpLines[index];
+        }
+        if (g_dumpSequence.load(std::memory_order_acquire) == before) {
+            break;
+        }
+    }
+    return held;
 }
 
 } // namespace sunrise::client::world

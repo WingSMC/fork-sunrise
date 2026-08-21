@@ -95,7 +95,16 @@ The Debug page of the Sunrise menu, described in
 1. **Memory view.** It shows the raw bytes of the player's physics component or of the picked
    target's component, at a chosen offset, as hexadecimal and as floats. Move in the game and
    watch which bytes change.
-2. **Log dump.** The `Write a log dump` button writes these lines to the client log channel:
+2. **Log dump.** The `Write a log dump` button asks for one dump. The dump runs on the next game
+   tick, because the body table belongs to the game thread. The result is shown in the page and
+   can be copied with `Copy the dump`.
+
+   The same lines also go to the client log channel at `info`. The shipped level for that channel
+   is `warn` (see `Sunrise/resources/default_settings.json`), so a normal run drops the log copy.
+   Raise `core.logging.levels.client` to `info` if you want the lines in the log file as well, and
+   set `file_sink` to `true` to keep them.
+
+   The dump holds these lines:
    - `part=local`: the player position, velocity, forward vector and the state of the pose flags.
    - `part=camera`: 32 floats of the camera pose block, starting four floats before the forward
      vector, with the offset of every line.

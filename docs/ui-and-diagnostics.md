@@ -101,6 +101,9 @@ one atomic read per component.
   starts at the player body, and the page says which origin was used.
 - Health, combatant state and AI state need the object datum array, which is not resolved yet. See
   [`reverse-engineering-notes.md`](reverse-engineering-notes.md).
+- The dump runs on the next game tick, not on the click, because the body table belongs to the
+  game thread. It is shown in the page itself: the shipped client log level is `warn`, so the log
+  copy of the dump is dropped on a normal run.
 
 ### Server modules
 

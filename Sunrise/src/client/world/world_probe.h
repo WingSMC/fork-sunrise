@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -16,6 +17,14 @@ inline constexpr std::uint64_t kBodyLifetimeMs = 500;
 inline constexpr std::uint64_t kScanRequestLifetimeMs = 500;
 /** Bytes one raw read returns. It bounds the cost of the interface's memory view. */
 inline constexpr std::size_t kRawReadCapacity = 256;
+
+/** Characters one dump line holds, including the null. */
+inline constexpr std::size_t kDumpLineCapacity = 192;
+/** Lines one dump holds. It covers the player, the camera window and the listed bodies. */
+inline constexpr std::size_t kDumpLineCount = 24;
+
+/** One held dump line, stored with no dynamic memory. */
+using DumpLine = std::array<char, kDumpLineCapacity>;
 
 /** Smallest and largest pick radius, in world units. */
 inline constexpr float kMinimumPickRadius = 0.25F;
@@ -157,12 +166,26 @@ void publish_settings(const PickSettings& value) noexcept;
 [[nodiscard]] std::size_t read_raw(const void* address, std::span<std::byte> output) noexcept;
 
 /**
- * Writes one diagnostic dump to the client log: the camera pose block window, the player position
- * beside it, and the nearest tracked bodies.
+ * Asks for one diagnostic dump. The dump runs on the next frame poll, which is on the game thread
+ * that owns the body table, so it never reads a table another thread is writing.
  *
- * The camera window is what confirms which offset in the block holds the eye position, which
- * cannot be found in the executable because its code sections are packed.
+ * The dump holds the camera pose block window, the player values beside it, and the nearest
+ * tracked bodies. The camera window is what confirms which offset in the block holds the eye
+ * position, which cannot be found in the executable because its code sections are packed.
+ *
+ * Every line goes to the client log channel and to the dump buffer. The buffer exists because the
+ * shipped log level for that channel is `warn`, so an ordinary run drops the log copy.
  */
-void log_dump() noexcept;
+void request_dump() noexcept;
+
+/** @return True while a dump is asked for and has not run yet. */
+[[nodiscard]] bool dump_pending() noexcept;
+
+/**
+ * Copies the last dump out for display.
+ * @param output Receives the lines, oldest first. Only the held lines are written.
+ * @return Lines written.
+ */
+[[nodiscard]] std::size_t dump_lines(std::span<DumpLine> output) noexcept;
 
 } // namespace sunrise::client::world
