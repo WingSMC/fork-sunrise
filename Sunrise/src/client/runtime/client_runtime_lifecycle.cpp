@@ -18,8 +18,9 @@
 #include "../hooks/teleport/runtime.h"
 #include "../inactivity/inactivity_settings_store.h"
 #include "../movement/movement_settings_store.h"
-#include "../spawn/spawn_keybind_store.h"
 #include "../player/player_settings_store.h"
+#include "../spawn/population_settings_store.h"
+#include "../spawn/spawn_keybind_store.h"
 #include "../targets/game.h"
 #include "../targets/steam_targets.h"
 #include "../ui/runtime/client_ui_module_runtime.h"
@@ -33,6 +34,8 @@ bool initialize(void* module) noexcept {
     // Loaded before the pages register, so each page draws saved values on its first frame.
     movement::initialize(module);
     spawn::initialize(module);
+    // Loaded here too, so the populator holds the saved settings before the panel first draws.
+    spawn::initialize_population(module);
     player::initialize(module);
     inactivity::initialize(module);
     return ui::runtime::initialize();
@@ -110,6 +113,7 @@ bool shutdown() noexcept {
     // The reverse of the order the stores initialize in.
     inactivity::shutdown();
     player::shutdown();
+    spawn::shutdown_population();
     spawn::shutdown();
     movement::shutdown();
     core::log::write(core::log::Channel::client, core::log::Level::info, "ev=shutdown result=ok");
