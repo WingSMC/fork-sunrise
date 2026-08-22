@@ -12,6 +12,12 @@ enum class Overlay : std::uint8_t {
     currentStatus,
     /** The instances of the session the player is in. */
     session,
+    /** Debug: the world probe's player readings. */
+    probePlayer,
+    /** Debug: the body pick and the world trace under the crosshair. */
+    probeCrosshair,
+    /** Debug: every body inside the probe's nearby radius. */
+    probeNearby,
     count,
 };
 

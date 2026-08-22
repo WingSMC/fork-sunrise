@@ -38,6 +38,14 @@ inline constexpr float kDefaultPickRadius = 2.0F;
 /** Default pick range. Bodies past this distance are not picked. */
 inline constexpr float kDefaultPickRange = 120.0F;
 
+/** Bodies one nearby list holds. Bodies past it are counted but not listed. */
+inline constexpr std::size_t kNearbyCapacity = 32;
+/** Smallest and largest nearby radius, in world units. */
+inline constexpr float kMinimumNearbyRadius = 1.0F;
+inline constexpr float kMaximumNearbyRadius = 500.0F;
+/** Default nearby radius. It covers the room the player stands in on most maps. */
+inline constexpr float kDefaultNearbyRadius = 40.0F;
+
 using Vector = hooks::teleport::Vector;
 using CameraPose = hooks::teleport::CameraPose;
 
@@ -132,11 +140,48 @@ struct SurfaceReport {
     bool codeResolved{};
 };
 
+/**
+ * One body the probe holds inside the nearby radius.
+ *
+ * The list covers every body the physics tick reports, not only the one at the crosshair. Static
+ * geometry has no body here, so it is never listed.
+ */
+struct NearbyBody {
+    /** World position of the body. */
+    Vector position{};
+    /** Linear velocity of the body. */
+    Vector velocity{};
+    /** Distance from the player to the body. */
+    float distance{};
+    /** Length of the body's velocity. */
+    float speed{};
+    /** Index bits of the object the body drives. */
+    std::uint32_t handleIndex{};
+    /** Full object handle, which is the index bits plus the generation. */
+    std::uint32_t handle{};
+    /** Physics component of the body, for the memory view. */
+    const void* component{};
+    /** Object record of the body, read through the game's object datum array. */
+    const void* object{};
+    /** True when a velocity was read for this body. */
+    bool velocityValid{};
+    /** True when the object handle named a live record in the datum array. */
+    bool objectResolved{};
+    /** True when this body is also the one the crosshair pick chose. */
+    bool isTarget{};
+};
+
 /** The whole probe result, published as one value so its parts cannot disagree. */
 struct Report {
     LocalReport local{};
     TargetReport target{};
     SurfaceReport surface{};
+    /** Bodies inside the nearby radius, nearest first. Only the held ones are written. */
+    std::array<NearbyBody, kNearbyCapacity> nearby{};
+    /** Bodies held in the list, which is at most its capacity. */
+    std::uint32_t nearbyCount{};
+    /** Bodies found inside the radius. It is larger than the count when the list overflows. */
+    std::uint32_t nearbyFound{};
     /** Point the camera ray reaches at the configured probe distance. It is not a surface hit. */
     Vector rayPoint{};
     /** Origin the ray was cast from. */
@@ -161,6 +206,8 @@ struct PickSettings {
     float range{kDefaultPickRange};
     /** Distance along the ray the reported ray point is taken at. */
     float probeDistance{kDefaultPickRange};
+    /** Bodies further than this from the player are not listed as nearby. */
+    float nearbyRadius{kDefaultNearbyRadius};
 };
 
 /**

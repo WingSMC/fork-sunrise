@@ -84,16 +84,16 @@ one atomic read per component.
 
 **Sections.**
 
-| Section             | Content                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Player position     | World position, velocity, speed, camera forward vector, yaw and pitch, and the eye position when the pose read is proved.       |
-| Player state        | In-world flag, controlled object handle, physics component address, activity name, session, region, bubble and slice-set state. |
-| Crosshair ray       | Ray origin, and the point the ray reaches at a chosen probe distance.                                                           |
-| Target at crosshair | The picked body: index bits, full object handle, object record address, world position, distance, distance off the ray, angle, velocity, speed and component address. |
-| Surface at crosshair | The world-trace result: hit position, distance, covered part of the segment, and the trace code with whether it resolved as an object handle. |
-| Unit state          | The raw object record of the picked unit, as hexadecimal and as floats, because health and AI state have no confirmed offset yet. |
-| Memory view         | Raw bytes of the player's or the target's physics component, as hexadecimal and as floats.                                      |
-| Probe               | Tracked and considered body counts, pick radius, pick range, and the log dump button.                                           |
+| Section              | Content                                                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Player position      | World position, velocity, speed, camera forward vector, yaw and pitch, and the eye position when the pose read is proved.                                             |
+| Player state         | In-world flag, controlled object handle, physics component address, activity name, session, region, bubble and slice-set state.                                       |
+| Crosshair ray        | Ray origin, and the point the ray reaches at a chosen probe distance.                                                                                                 |
+| Target at crosshair  | The picked body: index bits, full object handle, object record address, world position, distance, distance off the ray, angle, velocity, speed and component address. |
+| Surface at crosshair | The world-trace result: hit position, distance, covered part of the segment, and the trace code with whether it resolved as an object handle.                         |
+| Unit state           | The raw object record of the picked unit, as hexadecimal and as floats, because health and AI state have no confirmed offset yet.                                     |
+| Memory view          | Raw bytes of the player's or the target's physics component, as hexadecimal and as floats.                                                                            |
+| Probe                | Tracked and considered body counts, pick radius, pick range, and the log dump button.                                                                                 |
 
 **Limits you must keep in mind.**
 

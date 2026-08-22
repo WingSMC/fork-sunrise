@@ -76,6 +76,7 @@ std::atomic_uint64_t g_scanDeadline{0};
 std::atomic<float> g_radius{kDefaultPickRadius};
 std::atomic<float> g_range{kDefaultPickRange};
 std::atomic<float> g_probeDistance{kDefaultPickRange};
+std::atomic<float> g_nearbyRadius{kDefaultNearbyRadius};
 
 /** Set by the interface and cleared by the frame poll that runs the dump. */
 std::atomic_bool g_dumpRequested{false};
@@ -269,6 +270,69 @@ void pick(Report& report, std::uint64_t now) noexcept {
             report.surface.codeObject = spawn::object_record(static_cast<std::uint32_t>(hit.code));
             report.surface.codeResolved = report.surface.codeObject != nullptr;
         }
+    }
+}
+
+/**
+ * Lists the bodies inside the nearby radius, nearest first.
+ * @param report Report being built. Its local part and its pick are already filled.
+ * @param now Current tick, used to skip stale slots.
+ *
+ * The list is built after the pick so a body that the crosshair chose can be marked in it.
+ */
+void collect_nearby(Report& report, std::uint64_t now) noexcept {
+    const LocalReport& local = report.local;
+    if (!local.present) {
+        return;
+    }
+    const float radius = g_nearbyRadius.load(std::memory_order_relaxed);
+    for (const Slot& slot : g_slots) {
+        if (slot.component == nullptr || now - slot.seenTick > kBodyLifetimeMs) {
+            continue;
+        }
+        // The player's own body would always take the first row, where it says nothing new.
+        if (slot.component == local.component
+            || (local.controlled && slot.handleIndex == local.handleIndex)) {
+            continue;
+        }
+        const float distance = length(subtract(slot.position, local.position));
+        if (distance > radius) {
+            continue;
+        }
+        ++report.nearbyFound;
+        const auto held = static_cast<std::size_t>(report.nearbyCount);
+        // A full list only takes a body that is nearer than the one it would drop.
+        if (held == kNearbyCapacity && distance >= report.nearby[kNearbyCapacity - 1].distance) {
+            continue;
+        }
+        std::size_t place = held;
+        while (place > 0 && report.nearby[place - 1].distance > distance) {
+            --place;
+        }
+        for (std::size_t shift = std::min(held, kNearbyCapacity - 1); shift > place; --shift) {
+            report.nearby[shift] = report.nearby[shift - 1];
+        }
+        NearbyBody& entry = report.nearby[place];
+        entry = {};
+        entry.position = slot.position;
+        entry.velocity = slot.velocity;
+        entry.distance = distance;
+        entry.speed = slot.velocityValid ? length(slot.velocity) : 0.0F;
+        entry.handleIndex = slot.handleIndex;
+        entry.component = slot.component;
+        entry.velocityValid = slot.velocityValid;
+        entry.isTarget = report.target.present && slot.component == report.target.component;
+        if (held < kNearbyCapacity) {
+            ++report.nearbyCount;
+        }
+    }
+    // The record is resolved for the held rows only, so a crowded radius costs no more lookups.
+    for (std::size_t index = 0; index < report.nearbyCount; ++index) {
+        NearbyBody& entry = report.nearby[index];
+        std::uint32_t handle = 0;
+        entry.object = spawn::object_record_by_index(entry.handleIndex, handle);
+        entry.objectResolved = entry.object != nullptr;
+        entry.handle = handle;
     }
 }
 
@@ -500,6 +564,7 @@ void poll() noexcept {
     report.scanning = true;
     report.local = read_local();
     pick(report, now);
+    collect_nearby(report, now);
     publish(report);
     // The dump runs here, after the pass it describes, so it reports the values the page shows.
     if (g_dumpRequested.exchange(false, std::memory_order_acq_rel)) {
@@ -535,6 +600,7 @@ PickSettings settings() noexcept {
     value.radius = g_radius.load(std::memory_order_relaxed);
     value.range = g_range.load(std::memory_order_relaxed);
     value.probeDistance = g_probeDistance.load(std::memory_order_relaxed);
+    value.nearbyRadius = g_nearbyRadius.load(std::memory_order_relaxed);
     return value;
 }
 
@@ -546,6 +612,9 @@ void publish_settings(const PickSettings& value) noexcept {
     g_range.store(range, std::memory_order_relaxed);
     g_probeDistance.store(std::clamp(value.probeDistance, kMinimumPickRange, range),
                           std::memory_order_relaxed);
+    g_nearbyRadius.store(
+        std::clamp(value.nearbyRadius, kMinimumNearbyRadius, kMaximumNearbyRadius),
+        std::memory_order_relaxed);
 }
 
 /** Copies bytes out of game memory for the interface's memory view. */

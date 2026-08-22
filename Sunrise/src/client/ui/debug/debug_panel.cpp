@@ -47,6 +47,13 @@ constexpr float kDumpViewHeight = 200.0F;
 constexpr std::size_t kObjectViewBytes = 224;
 /** Height of the object record view, in authored pixels. */
 constexpr float kObjectViewHeight = 180.0F;
+/** Columns of the nearby-body table, in draw order. */
+constexpr int kNearbyColumnCount = 8;
+/** Nearby-body table flags. The table scrolls on its own so a crowded radius stays readable. */
+constexpr ImGuiTableFlags kNearbyTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
+                                              | ImGuiTableFlags_SizingStretchProp;
+/** Height of the nearby-body table, in authored pixels. It holds about eight rows. */
+constexpr float kNearbyTableHeight = 200.0F;
 
 /** Offset the memory view starts at, held for the session only. */
 int g_viewOffset = 0;
@@ -247,6 +254,99 @@ void draw_surface(const world::Report& report) noexcept {
     }
 }
 
+/**
+ * Draws every body inside the nearby radius, nearest first.
+ *
+ * It lists the same bodies the crosshair pick chooses from, so map geometry is absent here too.
+ */
+void draw_nearby(const world::Report& report,
+                 world::PickSettings& limits,
+                 bool& changed) noexcept {
+    ImGui::TextUnformatted("Bodies in radius");
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::SliderFloat("##nearby_radius",
+                           &limits.nearbyRadius,
+                           world::kMinimumNearbyRadius,
+                           world::kMaximumNearbyRadius,
+                           "radius %.0f units")) {
+        changed = true;
+    }
+    if (report.nearbyFound == 0) {
+        ImGui::TextDisabled("No moving body is inside the radius. Only bodies the physics tick "
+                            "reports are listed, so map geometry never appears here.");
+        return;
+    }
+    if (report.nearbyFound > report.nearbyCount) {
+        ImGui::TextDisabled("%u bodies inside the radius. The nearest %u are listed.",
+                            report.nearbyFound,
+                            report.nearbyCount);
+    } else {
+        ImGui::TextDisabled("%u bodies inside the radius.", report.nearbyFound);
+    }
+    if (!ImGui::BeginTable("##debug_nearby_table",
+                           kNearbyColumnCount,
+                           kNearbyTableFlags,
+                           ImVec2(0.0F, kNearbyTableHeight))) {
+        return;
+    }
+    ImGui::TableSetupColumn("#");
+    ImGui::TableSetupColumn("index");
+    ImGui::TableSetupColumn("handle");
+    ImGui::TableSetupColumn("distance");
+    ImGui::TableSetupColumn("position");
+    ImGui::TableSetupColumn("speed");
+    ImGui::TableSetupColumn("component");
+    ImGui::TableSetupColumn("record");
+    ImGui::TableHeadersRow();
+    for (std::uint32_t index = 0; index < report.nearbyCount; ++index) {
+        const world::NearbyBody& body = report.nearby[index];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        // The picked body is marked so the list and the crosshair section can be lined up.
+        if (body.isTarget) {
+            ImGui::Text("%u *", index);
+        } else {
+            ImGui::Text("%u", index);
+        }
+        ImGui::TableNextColumn();
+        ImGui::Text("%u", body.handleIndex);
+        ImGui::TableNextColumn();
+        if (body.objectResolved) {
+            ImGui::Text("0x%08X", body.handle);
+        } else {
+            ImGui::TextDisabled("%s", kUnread);
+        }
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f", static_cast<double>(body.distance));
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f  %.1f  %.1f",
+                    static_cast<double>(body.position[0]),
+                    static_cast<double>(body.position[1]),
+                    static_cast<double>(body.position[2]));
+        ImGui::TableNextColumn();
+        if (body.velocityValid) {
+            ImGui::Text("%.1f", static_cast<double>(body.speed));
+        } else {
+            ImGui::TextDisabled("%s", kUnread);
+        }
+        ImGui::TableNextColumn();
+        ImGui::Text("0x%llX",
+                    static_cast<unsigned long long>(
+                        reinterpret_cast<std::uintptr_t>(body.component)));
+        ImGui::TableNextColumn();
+        if (body.objectResolved) {
+            ImGui::Text("0x%llX",
+                        static_cast<unsigned long long>(
+                            reinterpret_cast<std::uintptr_t>(body.object)));
+        } else {
+            ImGui::TextDisabled("%s", kUnread);
+        }
+    }
+    ImGui::EndTable();
+    ImGui::TextDisabled("A row marked with * is the body the crosshair pick chose.");
+}
+
 /** Draws what the client cannot report yet, so the gap is stated instead of being left blank. */
 void draw_unit_state(const world::Report& report) noexcept {
     ImGui::TextUnformatted("Unit state");
@@ -438,6 +538,8 @@ void draw() noexcept {
     draw_target(report);
     ImGui::Spacing();
     draw_surface(report);
+    ImGui::Spacing();
+    draw_nearby(report, limits, changed);
     ImGui::Spacing();
     draw_unit_state(report);
     ImGui::Spacing();

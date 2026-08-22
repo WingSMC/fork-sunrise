@@ -10,6 +10,7 @@
 #include "../scaling/dpi/ui_dpi_scaling.h"
 #include "overlay.h"
 #include "overlays/ui_hud_logo_overlay.h"
+#include "overlays/ui_hud_probe_overlay.h"
 #include "overlays/ui_hud_session_overlay.h"
 #include "overlays/ui_hud_status_overlay.h"
 #include "store/hud_settings_store.h"
@@ -50,6 +51,23 @@ constexpr std::array<Entry, kOverlayCount> kOverlays{
     Entry{
         "Current Status", "current_status", "##sunrise_hud_status", &overlays::status::draw, false},
     Entry{"Session", "session", "##sunrise_hud_session", &overlays::session::draw, false},
+    // The debug panes read the world probe, which reads game memory only while a pane asks it to.
+    // They start off, because an ordinary run needs none of them.
+    Entry{"Debug: Player",
+          "debug_probe_player",
+          "##sunrise_hud_debug_player",
+          &overlays::probe::draw_player,
+          false},
+    Entry{"Debug: Crosshair",
+          "debug_probe_crosshair",
+          "##sunrise_hud_debug_crosshair",
+          &overlays::probe::draw_crosshair,
+          false},
+    Entry{"Debug: Bodies in radius",
+          "debug_probe_nearby",
+          "##sunrise_hud_debug_nearby",
+          &overlays::probe::draw_nearby,
+          false},
 };
 
 /** One status line's identity and starting switch state. */
