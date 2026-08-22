@@ -597,8 +597,6 @@ void draw_column(const char* title,
     ImGui::PopID();
 }
 
-} // namespace
-
 /**
  * @param tag Entity tag.
  * @return The first name of that tag, or an empty view when the packages name none.
@@ -611,7 +609,7 @@ void draw_column(const char* title,
     if (names.empty()) {
         return {};
     }
-    return {names.front().text.data(), names.front().length};
+        return {names.front().text.data(), names.front().length};
 }
 
 /**
@@ -1445,6 +1443,8 @@ void draw_population() noexcept {
         (void)client::spawn::publish_population(g_population);
     }
 }
+
+} // namespace
 
 void draw() noexcept {
     if (!g_scanned) {
