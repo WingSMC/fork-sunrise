@@ -612,9 +612,8 @@ void publish_settings(const PickSettings& value) noexcept {
     g_range.store(range, std::memory_order_relaxed);
     g_probeDistance.store(std::clamp(value.probeDistance, kMinimumPickRange, range),
                           std::memory_order_relaxed);
-    g_nearbyRadius.store(
-        std::clamp(value.nearbyRadius, kMinimumNearbyRadius, kMaximumNearbyRadius),
-        std::memory_order_relaxed);
+    g_nearbyRadius.store(std::clamp(value.nearbyRadius, kMinimumNearbyRadius, kMaximumNearbyRadius),
+                         std::memory_order_relaxed);
 }
 
 /** Copies bytes out of game memory for the interface's memory view. */

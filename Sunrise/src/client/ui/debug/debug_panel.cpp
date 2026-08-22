@@ -50,8 +50,8 @@ constexpr float kObjectViewHeight = 180.0F;
 /** Columns of the nearby-body table, in draw order. */
 constexpr int kNearbyColumnCount = 8;
 /** Nearby-body table flags. The table scrolls on its own so a crowded radius stays readable. */
-constexpr ImGuiTableFlags kNearbyTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
-                                              | ImGuiTableFlags_SizingStretchProp;
+constexpr ImGuiTableFlags kNearbyTableFlags =
+    ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
 /** Height of the nearby-body table, in authored pixels. It holds about eight rows. */
 constexpr float kNearbyTableHeight = 200.0F;
 
@@ -259,9 +259,7 @@ void draw_surface(const world::Report& report) noexcept {
  *
  * It lists the same bodies the crosshair pick chooses from, so map geometry is absent here too.
  */
-void draw_nearby(const world::Report& report,
-                 world::PickSettings& limits,
-                 bool& changed) noexcept {
+void draw_nearby(const world::Report& report, world::PickSettings& limits, bool& changed) noexcept {
     ImGui::TextUnformatted("Bodies in radius");
     ImGui::Separator();
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -331,14 +329,14 @@ void draw_nearby(const world::Report& report,
             ImGui::TextDisabled("%s", kUnread);
         }
         ImGui::TableNextColumn();
-        ImGui::Text("0x%llX",
-                    static_cast<unsigned long long>(
-                        reinterpret_cast<std::uintptr_t>(body.component)));
+        ImGui::Text(
+            "0x%llX",
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(body.component)));
         ImGui::TableNextColumn();
         if (body.objectResolved) {
-            ImGui::Text("0x%llX",
-                        static_cast<unsigned long long>(
-                            reinterpret_cast<std::uintptr_t>(body.object)));
+            ImGui::Text(
+                "0x%llX",
+                static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(body.object)));
         } else {
             ImGui::TextDisabled("%s", kUnread);
         }
