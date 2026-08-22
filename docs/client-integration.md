@@ -133,6 +133,23 @@ Sunrise also installs hooks for diagnostics, interface rendering, and player mec
   Magazine writes still pass through unchanged.
 - **Inactivity override (`hooks/inactivity/`)**: Resets player AFK timers to prevent idle kicks.
 
+### Client-side entity spawner
+
+The entity spawner is a client-local feature. It runs from the hooked player-component update and
+calls the game's placement initializer and object factory with a resident entity tag.
+
+It does not submit a server `SpawnActorCommand`. It does not send a gameplay spawn message. It does
+not publish the resulting object to other clients.
+
+The spawner uses the game's raycast for crosshair and ground placement. It receives a local object
+handle from the object factory. The population module uses that handle to detect when the local
+object record is no longer live and to track distance from the player. It does not distinguish all
+possible causes of an invalid handle. This tracking does not create server authority.
+
+The spawner can create a biped object. The repository does not confirm that this creates a complete
+Destiny combatant, controller, or AI instance. Health, shield, combatant, and AI offsets remain
+open reverse-engineering questions. See [Reverse engineering notes](reverse-engineering-notes.md).
+
 ---
 
 ## Result

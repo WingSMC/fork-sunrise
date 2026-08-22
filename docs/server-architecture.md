@@ -101,8 +101,22 @@ flowchart TD
 
 - **`BubbleHost`**: Composes the built-in world services and owns the active world slots.
 - **`WorldRunner`**: Executes one world's activity policy, commands, actors, and fixed ticks.
-- **`ActorControllerService`**: Updates actor positions, health values, and state flags.
+- **`ActorControllerService`**: Configures generic actor movement, path following, facing, arrival,
+  and stalled-path reporting.
 - **`MotionValidator`**: Enforces velocity thresholds and prevents illegal client position leaps.
 - **`InterestManager`**: Filters entity replication so clients receive updates only for entities in their active bubble.
 - **`HostCommand` and `CommandJournal`**: Represent host actions and persist committed command records.
 - **`ScriptlessPolicy`**: Provides inert fallback behavior when no mission policy is active.
+
+### Actor spawning and replication boundary
+
+The server `SpawnActorCommand` creates a logical actor in the generic world model. The world runner
+validates and commits the command in `ActorStore`. The replication layer projects the committed
+actor for gameplay transport.
+
+The client entity spawner uses a different path. It calls native Destiny object-creation functions
+inside the game process. It does not call `SpawnActorCommand`, and it does not notify other clients.
+
+The generic server actor path does not yet provide complete Destiny enemy replication. It needs a
+client-compatible entity identity, content setup, lifecycle messages, and gameplay state for each
+actor.

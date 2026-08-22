@@ -40,6 +40,62 @@ The spawn-set builder scans installed packages and publishes stems, hashes, and 
 
 This supports player placement in loaded destinations. It is separate from enemy or encounter spawning.
 
+## Manual entity spawner
+
+The manual spawner does not use the local server actor path.
+
+The UI calls `client::hooks::spawn::request` or `request_line`. The client stores the request and
+processes it from the hooked player-component update. The client then performs these steps:
+
+1. Resolve the entity tag in the loaded game content.
+2. Build a native placement record.
+3. Call the game's placement initializer.
+4. Call the game's object factory.
+5. Apply a transform when the object needs activation.
+6. Keep the local object handle for tracking.
+
+The client also uses the game's world raycast to find crosshair positions and ground positions.
+The code does not send a BAP request or a gameplay UDP spawn message for this operation.
+
+This has several consequences:
+
+- The spawned object is local to the current game process.
+- The spawner does not notify other clients.
+- The server does not own the object's logical identity.
+- The client-side population tracker is not server authority.
+- The population module does not currently remove a placed object through a known game call.
+
+The implementation is in [`spawn_runtime.cpp`](../Sunrise/src/client/hooks/spawn/spawn_runtime.cpp).
+
+## Server actor path
+
+The server has a separate generic actor path. `SpawnActorCommand` creates a logical actor in the
+server `ActorStore`. The world runner commits the command and emits an actor-spawn event. The
+replication layer can then project the actor into a generic gameplay representation.
+
+The current manual spawner does not submit this command. The generic actor path is a foundation for
+future server-owned gameplay. It is not a complete Destiny entity replication implementation.
+
+## Current gameplay behavior
+
+The server implements generic host-side controller, navigation, combat, damage, trigger, objective,
+credit, incident, and timer services. These services operate on server logical actors and fixed
+physics worlds.
+
+The controller service can configure an actor, request a navigation path, move the actor toward
+path waypoints, turn the actor, detect arrival, and report blocked or stalled movement. It is a
+generic movement service. It is not a recovered Destiny enemy behavior system.
+
+The combat kernel can create generic combatants, assign health and shields, record poses, validate
+damage, and process combat events. It does not define Destiny enemy types, attacks, encounters, or
+mission behavior.
+
+The default `ScriptlessPolicy` creates no actors and submits no gameplay commands. The repository
+does not contain a complete Destiny enemy AI or a confirmed interface to the native AI state.
+
+The client spawner creates a native game object from an entity tag and a transform. The repository
+does not confirm that this operation creates a complete combatant, controller, or AI instance.
+
 ## Reimplementing a Red War mission
 
 Loading a Red War destination and selecting a player spawn is a bounded extension of the existing activity and spawn-set work.
@@ -58,13 +114,13 @@ The generic host provides server-side mechanics. It cannot replace the mission l
 
 ## Relative difficulty
 
-| Goal | Expected scope |
-|---|---|
-| Load a destination and place the player at an authored spawn | Moderate. Sunrise already has destination and spawn-set systems. |
-| Create a static test actor through the local host | Significant but limited. The work requires a policy, actor data, and client-compatible replication. |
-| Show enemies with basic movement and damage | Large. The work requires actor presentation, combat behavior, lifecycle handling, and protocol research. |
-| Recreate one playable Red War encounter | Major reverse-engineering and implementation work. |
-| Recreate the full Red War campaign | A long-term project with extensive mission, NPC, and client-compatibility work. |
+| Goal                                                         | Expected scope                                                                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Load a destination and place the player at an authored spawn | Moderate. Sunrise already has destination and spawn-set systems.                                         |
+| Create a static test actor through the local host            | Significant but limited. The work requires a policy, actor data, and client-compatible replication.      |
+| Show enemies with basic movement and damage                  | Large. The work requires actor presentation, combat behavior, lifecycle handling, and protocol research. |
+| Recreate one playable Red War encounter                      | Major reverse-engineering and implementation work.                                                       |
+| Recreate the full Red War campaign                           | A long-term project with extensive mission, NPC, and client-compatibility work.                          |
 
 ## Development direction
 
