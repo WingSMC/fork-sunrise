@@ -67,6 +67,15 @@ void publish() noexcept;
 
 } // namespace entity_name_catalog
 
+/** Installed entity catalog publish marker. */
+namespace entity_catalog {
+
+void clear() noexcept;
+void publish() noexcept;
+[[nodiscard]] bool ready() noexcept;
+
+} // namespace entity_catalog
+
 /** Spawn-set catalog publish marker. */
 namespace spawn_catalog {
 

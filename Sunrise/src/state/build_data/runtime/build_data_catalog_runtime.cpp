@@ -4,6 +4,7 @@
 #include "../abilities/ability_bucket_catalog.h"
 #include "../collectibles/collectible_catalog.h"
 #include "../constants/investment_constant_catalog.h"
+#include "../entities/entity_catalog.h"
 #include "../entity_names/entity_name_catalog.h"
 #include "../hash_names/hash_name_catalog.h"
 #include "../inventory/buckets/inventory_bucket_catalog.h"
@@ -70,6 +71,12 @@ void rollback_name_catalog_publication() noexcept {
 void rollback_entity_name_publication() noexcept {
     runtime::entity_name_catalog::clear();
     entity_names::clear();
+}
+
+/** Drops the entity ready flag, then removes the failed entity candidate. */
+void rollback_entity_publication() noexcept {
+    runtime::entity_catalog::clear();
+    entities::clear();
 }
 
 /** Drops the spawn-set ready flag, then removes the failed spawn-set candidate. */
@@ -205,6 +212,41 @@ std::size_t entity_name_count() noexcept {
 bool snapshot_entity_names(std::span<entity_names::Name> output, std::size_t& count) noexcept {
     count = 0;
     return entity_names_ready() && entity_names::snapshot(output, count);
+}
+
+bool entities_ready() noexcept {
+    return runtime::entity_catalog::ready();
+}
+
+bool publish_entities(std::span<const entities::Family> families,
+                      std::span<const entities::Entity> installed) noexcept {
+    runtime::persistence::Transaction transaction;
+    if (!transaction.active()) {
+        return false;
+    }
+    if (!entities::replace(families, installed)) {
+        return transaction.finish(false, rollback_entity_publication);
+    }
+    runtime::entity_catalog::publish();
+    return transaction.finish(true, rollback_entity_publication);
+}
+
+std::size_t entity_count() noexcept {
+    return entities_ready() ? entities::count() : 0;
+}
+
+bool snapshot_entities(std::span<entities::Entity> output, std::size_t& count) noexcept {
+    count = 0;
+    return entities_ready() && entities::snapshot(output, count);
+}
+
+std::size_t entity_family_count() noexcept {
+    return entities_ready() ? entities::family_count() : 0;
+}
+
+bool snapshot_entity_families(std::span<entities::Family> output, std::size_t& count) noexcept {
+    count = 0;
+    return entities_ready() && entities::snapshot_families(output, count);
 }
 
 /** @return True when a complete spawn-set catalog, empty or not, is published. */
@@ -409,6 +451,7 @@ void clear_catalogs() noexcept {
     rollback_spawn_catalog_publication();
     rollback_name_catalog_publication();
     rollback_entity_name_publication();
+    rollback_entity_publication();
     vendors::clear();
     constants::clear();
 }

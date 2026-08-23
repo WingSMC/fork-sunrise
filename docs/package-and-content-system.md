@@ -105,6 +105,8 @@ graph TD
     Scanner --> Items["Items<br/>(Weapons, armor, plugs, perks)"]
     Scanner --> Vendors["Vendors<br/>(Catalogs & prices)"]
     Scanner --> Investment["Investment<br/>(Progressions & milestones)"]
+    Scanner --> EntityNames["Entity names<br/>(Tag to display name)"]
+    Scanner --> Entities["Entities<br/>(Installed tag list & families)"]
 ```
 
 ### Extracted content catalogs
@@ -122,6 +124,27 @@ graph TD
    - Parses vendor sale tables, purchase conditions, and price requirements.
 5. **Investment and progressions**:
    - Extracts reputation tiers, power level caps, and triumph objective definitions.
+6. **Entity names**:
+   - Reads named bags, budget tables, and the localized string banks.
+   - Publishes one row per entity tag and name, which the spawn picker shows.
+   - See [`entity_name_build.cpp`](../Sunrise/src/client/content/entity_names/entity_name_build.cpp).
+7. **Entities**:
+   - Sweeps the entity tag class once and publishes every installed tag with the package family
+     that installs it.
+   - The list holds only what the packages declare. Whether a tag is loaded, and which object type
+     it carries, belongs to the running game, so a reader asks the client for that at use time.
+   - See [`entity_build.cpp`](../Sunrise/src/client/content/entities/entity_build.cpp) and
+     [`entity_catalog.h`](../Sunrise/src/state/build_data/entities/entity_catalog.h).
+
+Every catalog above follows the same three steps, and a new one must follow them too:
+
+1. A build pass under `client/content/<domain>/` reads the packages and publishes rows.
+2. A catalog under `state/build_data/<domain>/` validates, holds, and hands out the rows.
+3. A record pair under `state/build_data/cache/records/` writes the rows to the build-data cache
+   and reads them back, so the second start does no sweep.
+
+A reader, and a user interface page above all, only takes a snapshot of the published catalog. A
+page that opens a package itself skips the cache and repeats the work on every refresh.
 
 ---
 

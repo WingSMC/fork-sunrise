@@ -80,17 +80,26 @@ The camera pose block stride is `0xC50`.
 ### Game calls the client holds
 
 These come from the entity spawner of upstream pull request 46 and the world population of pull
-request 58. They are module-relative addresses, in
-[`spawn_runtime.cpp`](../Sunrise/src/client/hooks/spawn/spawn_runtime.cpp).
+request 58. Every one of them is found by a byte signature at install time, in
+[`spawn_runtime.cpp`](../Sunrise/src/client/hooks/spawn/spawn_runtime.cpp). None is a hardcoded
+address: a hardcoded address holds only for one build and fails silently on any other, while a
+missing signature fails the install and says so in the log.
 
-| Name                    | RVA         | Use                                                    |
-| ----------------------- | ----------- | ------------------------------------------------------ |
-| World raycast           | `0x128E3D0` | Traces a segment against the world and reports the hit |
-| Object factory          | `0x56D990`  | Creates one object from a placement                    |
-| Object transform        | `0x559B10`  | Moves one object                                       |
-| Tag resolver            | `0x1258970` | Turns an entity tag into its definition                |
-| Placement initialize    | `0x4B2570`  | Fills one placement record                             |
-| Player component update | `0xBB0DB0`  | Per-tick call the spawner runs its work on             |
+| Name                    | How it is found                                             |
+| ----------------------- | ----------------------------------------------------------- |
+| Placement initialize    | Own signature                                               |
+| Direct initialize       | Own signature                                               |
+| Tag resolver            | The call at offset `0x17` of the direct initializer         |
+| Object factory          | Own signature                                               |
+| Object transform        | Own signature                                               |
+| World raycast           | Own signature                                               |
+| Player component update | Own signature. The spawner hooks it and runs its work there |
+
+The signature text of each is in the source, beside the call it resolves. The bytes were taken
+from upstream pull requests 38, 44, 58, 65, and 66, which agree byte for byte, but none of those
+is merged, so treat the bytes as unproved until an install on the supported build reports
+`ev=spawn stage=install result=ok`. A signature that matches nothing, or more than once, makes
+`install()` report `result=fail reason=target` and leaves the spawner switched off.
 
 The raycast signature is
 `bool(const float* up, const float* up, const float* start, const float* end, int ignoreA,
@@ -102,11 +111,16 @@ also tries to read it as an object handle, which is how the two can be told apar
 
 | Name                | Value       | Note                                            |
 | ------------------- | ----------- | ----------------------------------------------- |
-| Descriptor          | `0x1F93420` | Module-relative                                 |
+| Descriptor          | `0x1F93420` | Module-relative. The one address still hardcoded |
 | Base pointer offset | `0x08`      | Inside the descriptor                           |
 | Stride offset       | `0x10`      | Inside the descriptor. Its value must be `0xE0` |
 | Record size         | `0xE0`      | One object record                               |
 | Handle offset       | `0x0C`      | Inside the record. Holds the full handle        |
+
+The descriptor is data, not code, so no byte signature reaches it: the bytes around it are the
+pointer and the stride the game writes at load time. Every read of it checks that the stride is
+`0xE0`, so a wrong address gives no record instead of a bad one. Finding a code site that loads
+the descriptor would let a signature replace this address as well.
 
 A handle names a record at `base + (handle & 0x1FFF) * stride`. The record holds the **full**
 handle at `0x0C`, which is the index bits plus a generation counter. The physics component reports

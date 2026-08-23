@@ -12,6 +12,7 @@
 #include "../../collectibles/collectible_catalog.h"
 #include "../../constants/definition.h"
 #include "../../definition.h"
+#include "../../entities/definition.h"
 #include "../../entity_names/definition.h"
 #include "../../hash_names/definition.h"
 #include "../../inventory/buckets/definition.h"
@@ -50,6 +51,8 @@ struct Context {
     std::vector<spawn_sets::Point> spawnPointScratch{};
     std::vector<hash_names::Name> hashNameScratch{};
     std::vector<entity_names::Name> entityNameScratch{};
+    std::vector<entities::Family> entityFamilyScratch{};
+    std::vector<entities::Entity> entityScratch{};
     std::vector<vendors::IndexEntry> vendorIndexScratch{};
     std::vector<vendors::Definition> vendorDefinitionScratch{};
     std::vector<vendors::SaleRow> vendorSaleRowScratch{};

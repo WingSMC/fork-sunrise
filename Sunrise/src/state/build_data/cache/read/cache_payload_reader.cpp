@@ -92,6 +92,8 @@ void clear(records::MutableDomains output) noexcept {
     std::fill(output.spawnPoints.begin(), output.spawnPoints.end(), spawn_sets::Point{});
     std::fill(output.hashNames.begin(), output.hashNames.end(), hash_names::Name{});
     std::fill(output.entityNames.begin(), output.entityNames.end(), entity_names::Name{});
+    std::fill(output.entityFamilies.begin(), output.entityFamilies.end(), entities::Family{});
+    std::fill(output.installedEntities.begin(), output.installedEntities.end(), entities::Entity{});
     std::fill(output.vendorIndex.begin(), output.vendorIndex.end(), vendors::IndexEntry{});
     std::fill(
         output.vendorDefinitions.begin(), output.vendorDefinitions.end(), vendors::Definition{});
@@ -125,6 +127,8 @@ bool expected_size(const records::DomainCounts& counts, std::uint64_t& size) noe
            && add_records(counts.spawnPoints, sizeof(records::SpawnPointRecord), size)
            && add_records(counts.hashNames, sizeof(records::HashNameRecord), size)
            && add_records(counts.entityNames, sizeof(records::EntityNameRecord), size)
+           && add_records(counts.entityFamilies, sizeof(records::EntityFamilyRecord), size)
+           && add_records(counts.installedEntities, sizeof(records::EntityRecord), size)
            && add_records(counts.vendorIndex, sizeof(records::VendorIndexRecord), size)
            && add_records(counts.vendorDefinitions, sizeof(records::VendorDefinitionRecord), size)
            && add_records(counts.vendorSaleRows, sizeof(records::VendorSaleRowRecord), size)
@@ -199,6 +203,12 @@ bool read_payload(HANDLE file,
             && read_domain<records::EntityNameRecord>(
                 file, output.entityNames.first(counts.entityNames), checksum);
     valid = valid
+            && read_domain<records::EntityFamilyRecord>(
+                file, output.entityFamilies.first(counts.entityFamilies), checksum);
+    valid = valid
+            && read_domain<records::EntityRecord>(
+                file, output.installedEntities.first(counts.installedEntities), checksum);
+    valid = valid
             && read_domain<records::VendorIndexRecord>(
                 file, output.vendorIndex.first(counts.vendorIndex), checksum);
     valid = valid
@@ -235,6 +245,8 @@ bool read_payload(HANDLE file,
         output.spawnPoints.first(counts.spawnPoints),
         output.hashNames.first(counts.hashNames),
         output.entityNames.first(counts.entityNames),
+        output.entityFamilies.first(counts.entityFamilies),
+        output.installedEntities.first(counts.installedEntities),
         output.vendorIndex.first(counts.vendorIndex),
         output.vendorDefinitions.first(counts.vendorDefinitions),
         output.vendorSaleRows.first(counts.vendorSaleRows),

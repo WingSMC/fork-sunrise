@@ -18,6 +18,7 @@
 #include "../../../../state/runtime/runtime.h"
 #include "../../../memory/current_process_memory.h"
 #include "../../../targets/game.h"
+#include "../../entities/entity_build.h"
 #include "../../entity_names/entity_name_build.h"
 #include "../../hash_names/hash_name_build.h"
 #include "../../scenarios/scenario_build.h"
@@ -42,6 +43,7 @@ namespace {
            && state::build_data::progression_definitions_ready()
            && state::build_data::scenario_layouts_ready() && state::build_data::spawn_sets_ready()
            && state::build_data::hash_names_ready() && state::build_data::entity_names_ready()
+           && state::build_data::entities_ready()
            && state::build_data::investment_constants_ready();
 }
 
@@ -89,6 +91,7 @@ bool build() noexcept {
         (void)content::spawn_sets::build(packageSource, storage.scratch);
         (void)content::hash_names::build(packageSource, storage.scratch);
         (void)content::entity_names::build(packageSource, storage.scratch);
+        (void)content::entities::build(packageSource);
     }
     if (root_domains_ready()) {
         SecureZeroMemory(&keys, sizeof keys);

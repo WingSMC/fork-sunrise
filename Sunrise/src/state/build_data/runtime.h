@@ -10,6 +10,7 @@
 #include "collectibles/collectible_catalog.h"
 #include "constants/definition.h"
 #include "definition.h"
+#include "entities/definition.h"
 #include "entity_names/definition.h"
 #include "hash_names/definition.h"
 #include "inventory/buckets/definition.h"
@@ -445,6 +446,32 @@ publish_scenario_layouts(std::span<const scenarios::Definition> definitions,
 /** Copies the complete entity-name alias table in tag/name order. */
 [[nodiscard]] bool snapshot_entity_names(std::span<entity_names::Name> output,
                                          std::size_t& count) noexcept;
+
+/** @return True when a complete entity catalog, empty or not, is published. */
+[[nodiscard]] bool entities_ready() noexcept;
+
+/**
+ * Publishes the installed entity catalog in one step.
+ * @param families Complete family rows in ascending name order.
+ * @param installed Complete entity rows in ascending tag order.
+ * @return True when the catalog passes validation and fits fixed State storage.
+ */
+[[nodiscard]] bool publish_entities(std::span<const entities::Family> families,
+                                    std::span<const entities::Entity> installed) noexcept;
+
+/** @return Number of installed entity rows. */
+[[nodiscard]] std::size_t entity_count() noexcept;
+
+/** Copies the complete entity row set in ascending tag order. */
+[[nodiscard]] bool snapshot_entities(std::span<entities::Entity> output,
+                                     std::size_t& count) noexcept;
+
+/** @return Number of package families that install entities. */
+[[nodiscard]] std::size_t entity_family_count() noexcept;
+
+/** Copies the complete family bank in ascending name order. */
+[[nodiscard]] bool snapshot_entity_families(std::span<entities::Family> output,
+                                            std::size_t& count) noexcept;
 
 /** @return True when a complete spawn-set catalog, empty or not, is published. */
 [[nodiscard]] bool spawn_sets_ready() noexcept;

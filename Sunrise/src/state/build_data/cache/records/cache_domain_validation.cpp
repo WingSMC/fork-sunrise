@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../abilities/ability_bucket_catalog.h"
+#include "../../entities/entity_catalog.h"
 #include "../../entity_names/entity_name_catalog.h"
 #include "../../hash_names/hash_name_catalog.h"
 #include "../../inventory/buckets/inventory_bucket_catalog.h"
@@ -153,6 +154,8 @@ template <typename Value, typename Less>
            && counts.spawnPoints <= domains.spawnPoints.size()
            && counts.hashNames <= domains.hashNames.size()
            && counts.entityNames <= domains.entityNames.size()
+           && counts.entityFamilies <= domains.entityFamilies.size()
+           && counts.installedEntities <= domains.installedEntities.size()
            && counts.vendorIndex <= domains.vendorIndex.size()
            && counts.vendorDefinitions <= domains.vendorDefinitions.size()
            && counts.vendorSaleRows <= domains.vendorSaleRows.size()
@@ -235,8 +238,8 @@ bool valid_domains(Domains domains) noexcept {
                                   domains.vendorDefinitions,
                                   domains.vendorSaleRows,
                                   domains.vendorInstalledRows))
-        || !hash_names::valid(domains.hashNames)
-        || !entity_names::valid(domains.entityNames)) {
+        || !hash_names::valid(domains.hashNames) || !entity_names::valid(domains.entityNames)
+        || !entities::valid(domains.entityFamilies, domains.installedEntities)) {
         return false;
     }
     for (std::size_t index = 0; index < domains.items.size(); ++index) {

@@ -126,6 +126,8 @@ enum class WriteStatus {
         static_cast<std::uint32_t>(domains.spawnPoints.size()),
         static_cast<std::uint32_t>(domains.hashNames.size()),
         static_cast<std::uint32_t>(domains.entityNames.size()),
+        static_cast<std::uint32_t>(domains.entityFamilies.size()),
+        static_cast<std::uint32_t>(domains.installedEntities.size()),
         static_cast<std::uint32_t>(domains.vendorIndex.size()),
         static_cast<std::uint32_t>(domains.vendorDefinitions.size()),
         static_cast<std::uint32_t>(domains.vendorSaleRows.size()),

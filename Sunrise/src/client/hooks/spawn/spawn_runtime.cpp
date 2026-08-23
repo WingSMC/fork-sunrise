@@ -26,20 +26,74 @@
 namespace sunrise::client::hooks::spawn {
 namespace {
 
-constexpr std::uintptr_t kPlacementInitializeRva = 0x4B25F0;
-constexpr std::uintptr_t kDirectInitializeRva = 0x4B2570;
-constexpr std::uintptr_t kObjectFactoryRva = 0x56D990;
-constexpr std::uintptr_t kObjectTransformRva = 0x559B10;
-constexpr std::uintptr_t kTagResolverRva = 0x1258970;
-constexpr std::uintptr_t kWorldRaycastRva = 0x128E3D0;
-constexpr std::uintptr_t kPlayerComponentUpdateRva = 0xBB0DB0;
+using namespace patterns;
+
+// Matches the placement filler, which is entered with the entity tag already in a register.
+// The two long branches and the table load are wildcarded, so the match carries no address.
+constexpr std::string_view kPlacementInitializeText =
+    "89 54 24 10 53 48 83 EC 20 48 8B D9 83 FA FF 0F 84 ? ? ? ? 48 8D 54 24 30 "
+    "48 8D 4C 24 38 E8 ? ? ? ? 8B 44 24 30 83 F8 FF 0F 84 ? ? ? ? 48 8B 15 ? ? ? ?";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kPlacementInitialize =
+    signature<signature_length(kPlacementInitializeText)>(kPlacementInitializeText);
+
+// Matches the direct placement filler. Its first call is the tag resolver, which is why the
+// match has to run on past the call: the resolver is reached through that displacement.
+constexpr std::string_view kDirectInitializeText =
+    "48 89 5C 24 08 57 48 83 EC 20 8B DA 48 8B F9 83 FA FF 74 33 8B CA E8 ? ? ? ? "
+    "48 C7 47 30 00 00 00 00 48 8B CF 48 C7 47 10 00 00 00 00";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kDirectInitialize =
+    signature<signature_length(kDirectInitializeText)>(kDirectInitializeText);
+
+// Matches the object factory, whose two invalid-datum arguments precede the inner call.
+constexpr std::string_view kObjectFactoryText =
+    "40 53 48 83 EC 20 41 83 C9 FF 41 83 C8 FF 48 8B D9 E8 ? ? ? ? 48 8B C3 "
+    "48 83 C4 20 5B C3";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kObjectFactory = signature<signature_length(kObjectFactoryText)>(kObjectFactoryText);
+
+// Matches the object mover, which writes the transform at offset 0xA0 of the object.
+constexpr std::string_view kObjectTransformText =
+    "48 89 5C 24 10 57 48 83 EC 70 0F 29 74 24 60 48 8B 05 ? ? ? ? 48 33 C4 "
+    "48 89 44 24 50 0F 10 02 48 8B F9 0F 11 81 A0 00 00 00 0F 10 72 10 "
+    "0F 29 74 24 30 E8 ? ? ? ? 8B D8 E8 ? ? ? ?";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kObjectTransform =
+    signature<signature_length(kObjectTransformText)>(kObjectTransformText);
+
+// Matches the world trace. The prologue alone is not unique, so the match runs on through the
+// frame setup and the two saved vector registers.
+constexpr std::string_view kWorldRaycastText =
+    "48 8B C4 48 89 58 08 48 89 70 10 55 57 41 54 41 56 41 57 48 8D 68 98 "
+    "48 81 EC 40 01 00 00 0F 29 70 C8 0F 29 78 B8";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kWorldRaycast = signature<signature_length(kWorldRaycastText)>(kWorldRaycastText);
+
+// Matches the per-tick player component update this module hooks its work onto.
+constexpr std::string_view kPlayerComponentUpdateText =
+    "48 89 5C 24 10 55 57 41 54 41 56 41 57 48 8B EC 48 83 EC 70 45 33 E4 "
+    "48 89 B4 24 A0 00 00 00 41 8B FC 48 8D 99 FC 02 00 00 4D 8B F0 4C 8B FA";
+/** Compiled pattern bytes of the signature text above. */
+constexpr auto kPlayerComponentUpdate =
+    signature<signature_length(kPlayerComponentUpdateText)>(kPlayerComponentUpdateText);
+
+/** Offset of the tag-resolver call displacement inside the direct placement filler. */
+constexpr std::size_t kResolverCallOperand = 0x17;
+/** Offset just past that call instruction, which the displacement is relative to. */
+constexpr std::size_t kResolverCallEnd = 0x1B;
 constexpr std::uint32_t kInvalidDatum = 0xFFFFFFFFU;
 constexpr std::size_t kDefinitionObjectType = 0x96;
 constexpr std::uint32_t kMaximumAmount = 4096;
 constexpr std::size_t kMaximumLineItems = 262144;
 constexpr std::size_t kPlacementHeaderBytes = 0x40;
 constexpr std::size_t kPlacementPayloadBytes = 0x800;
-
+/**
+ * Module-relative descriptor of the object datum array.
+ * This is a data address, not code, so no byte signature reaches it: the only bytes around it are
+ * the pointer and the stride the game writes there at load time. Every read of it is checked
+ * below, and a wrong address fails the stride check instead of handing out a bad record.
+ */
 constexpr std::uintptr_t kObjectDatumDescriptorRva = 0x1F93420;
 constexpr std::size_t kObjectDatumBaseOffset = 0x08;
 constexpr std::size_t kObjectDatumStrideOffset = 0x10;
@@ -838,22 +892,33 @@ bool install() noexcept {
         return true;
     }
     g_gameModule = GetModuleHandleW(nullptr);
-    if (g_gameModule == nullptr) {
+    std::byte* const initialize =
+        scan_main_image_unique(kPlacementInitialize, "spawn_placement_initialize");
+    std::byte* const direct = scan_main_image_unique(kDirectInitialize, "spawn_direct_initialize");
+    std::byte* const factory = scan_main_image_unique(kObjectFactory, "spawn_object_factory");
+    std::byte* const transform = scan_main_image_unique(kObjectTransform, "spawn_object_transform");
+    std::byte* const raycast = scan_main_image_unique(kWorldRaycast, "spawn_world_raycast");
+    std::byte* const update =
+        scan_main_image_unique(kPlayerComponentUpdate, "spawn_player_component_update");
+    if (g_gameModule == nullptr || initialize == nullptr || direct == nullptr || factory == nullptr
+        || transform == nullptr || raycast == nullptr || update == nullptr) {
+        g_gameModule = nullptr;
         core::log::write(core::log::Channel::client,
                          core::log::Level::warn,
                          "ev=spawn stage=install result=fail reason=target");
         return false;
     }
-    std::byte* const base = reinterpret_cast<std::byte*>(g_gameModule);
-    g_initialize = reinterpret_cast<PlacementInitialize>(base + kPlacementInitializeRva);
-    g_directInitialize = reinterpret_cast<PlacementInitialize>(base + kDirectInitializeRva);
-    g_factory = reinterpret_cast<ObjectFactory>(base + kObjectFactoryRva);
-    g_transform = reinterpret_cast<ObjectTransform>(base + kObjectTransformRva);
-    g_resolver = reinterpret_cast<TagResolver>(base + kTagResolverRva);
-    g_raycast = reinterpret_cast<WorldRaycast>(base + kWorldRaycastRva);
-    void* const update = base + kPlayerComponentUpdateRva;
-    if (!hooking::detour::install({update, reinterpret_cast<void*>(&player_component_update)},
-                                  g_updateHook)) {
+    g_initialize = reinterpret_cast<PlacementInitialize>(initialize);
+    g_directInitialize = reinterpret_cast<PlacementInitialize>(direct);
+    g_factory = reinterpret_cast<ObjectFactory>(factory);
+    g_transform = reinterpret_cast<ObjectTransform>(transform);
+    // The resolver is only reached through the call the direct filler makes into it.
+    g_resolver = reinterpret_cast<TagResolver>(
+        resolve_relative(direct + kResolverCallOperand, direct + kResolverCallEnd));
+    g_raycast = reinterpret_cast<WorldRaycast>(raycast);
+    if (g_resolver == nullptr
+        || !hooking::detour::install({update, reinterpret_cast<void*>(&player_component_update)},
+                                     g_updateHook)) {
         uninstall();
         core::log::write(core::log::Channel::client,
                          core::log::Level::warn,

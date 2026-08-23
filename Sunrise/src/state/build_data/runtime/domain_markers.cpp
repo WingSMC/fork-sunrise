@@ -42,6 +42,7 @@ DomainMarker g_named;
 DomainMarker g_spawnCatalog;
 DomainMarker g_bubbleCatalog;
 DomainMarker g_entityNameCatalog;
+DomainMarker g_entityCatalog;
 
 } // namespace
 
@@ -124,6 +125,22 @@ bool ready() noexcept {
 }
 
 } // namespace entity_name_catalog
+
+namespace entity_catalog {
+
+void clear() noexcept {
+    g_entityCatalog.clear();
+}
+
+void publish() noexcept {
+    g_entityCatalog.publish();
+}
+
+bool ready() noexcept {
+    return g_entityCatalog.ready();
+}
+
+} // namespace entity_catalog
 
 namespace spawn_catalog {
 

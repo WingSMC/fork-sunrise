@@ -10,6 +10,7 @@
 #include "../../collectibles/collectible_catalog.h"
 #include "../../constants/definition.h"
 #include "../../definition.h"
+#include "../../entities/definition.h"
 #include "../../entity_names/definition.h"
 #include "../../hash_names/definition.h"
 #include "../../items/details/definition.h"
@@ -30,7 +31,7 @@ inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', '
  * Bump it when a stored shape changes, and when the extraction filling it changes what it writes.
  * A cached row survives a code change, so a corrected walk keeps publishing the old rows.
  */
-inline constexpr std::uint32_t kCacheFormatVersion = 45;
+inline constexpr std::uint32_t kCacheFormatVersion = 46;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
 /** The standard 64-bit FNV-1a offset basis starts the payload checksum. */
@@ -86,6 +87,8 @@ struct Header {
     std::uint32_t spawnPointCount{};
     std::uint32_t hashNameCount{};
     std::uint32_t entityNameCount{};
+    std::uint32_t entityFamilyCount{};
+    std::uint32_t entityCount{};
     std::uint32_t vendorIndexCount{};
     std::uint32_t vendorDefinitionCount{};
     std::uint32_t vendorSaleRowCount{};
@@ -330,6 +333,23 @@ struct EntityNameRecord {
     std::array<std::uint8_t, 3> reserved{};
 };
 
+/** Disk form of one package family that installs entities. */
+struct EntityFamilyRecord {
+    std::array<char, entities::kFamilyNameLength> name{};
+    std::uint32_t entityCount{};
+    std::uint8_t nameLength{};
+    /** Must be zero, so the packed family row always matches. */
+    std::array<std::uint8_t, 3> reserved{};
+};
+
+/** Disk form of one installed entity tag. */
+struct EntityRecord {
+    std::uint32_t tag{};
+    std::uint16_t familyIndex{};
+    /** Must be zero, so the packed entity row always matches. */
+    std::array<std::uint8_t, 2> reserved{};
+};
+
 /** Disk form of one distinct spawn-name hash inside a map-package stem. */
 struct SpawnNameHashRecord {
     std::uint32_t value{};
@@ -432,7 +452,7 @@ static_assert(sizeof(Prefix) == kCacheMagic.size() + sizeof(std::uint32_t));
 static_assert(sizeof(InvestmentConstants)
               == constants::kCharacterStatRowCount + 2 * sizeof(std::uint8_t));
 static_assert(sizeof(Header)
-              == kCacheMagic.size() + 27 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
+              == kCacheMagic.size() + 29 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
                      + sizeof(InvestmentConstants));
 static_assert(sizeof(SpawnPointRecord)
               == spawn_sets::kPositionComponents * sizeof(float) + sizeof(std::uint32_t)
@@ -448,6 +468,10 @@ static_assert(sizeof(HashNameRecord)
               == hash_names::kNameLength + sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(EntityNameRecord)
               == entity_names::kNameLength + sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
+static_assert(sizeof(EntityFamilyRecord)
+              == entities::kFamilyNameLength + sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
+static_assert(sizeof(EntityRecord)
+              == sizeof(std::uint32_t) + sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
 static_assert(sizeof(ScenarioRecord)
               == scenarios::kNameCapacity + sizeof(std::uint32_t) + 10 * sizeof(std::uint8_t)
                      + scenarios::kSpawnStemCapacity

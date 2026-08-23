@@ -136,7 +136,8 @@ Sunrise also installs hooks for diagnostics, interface rendering, and player mec
 ### Client-side entity spawner
 
 The entity spawner is a client-local feature. It runs from the hooked player-component update and
-calls the game's placement initializer and object factory with a resident entity tag.
+calls the game's placement initializer and object factory with a resident entity tag. It finds
+every one of those game calls by byte signature, so it holds no hardcoded code address.
 
 It does not submit a server `SpawnActorCommand`. It does not send a gameplay spawn message. It does
 not publish the resulting object to other clients.

@@ -12,18 +12,16 @@
 #include <string_view>
 #include <vector>
 
-#include "../../../client/content/items/packages/internal.h"
 #include "../../../client/content/placements/placement_extract.h"
 #include "../../../client/hooks/spawn/spawn_runtime.h"
 #include "../../../client/player/player_position.h"
 #include "../../../client/spawn/population_settings_store.h"
 #include "../../../client/spawn/spawn_keybind_store.h"
-#include "../../../core/filesystem/path.h"
 #include "../../../core/ui/components/picker/ui_picker_component.h"
-#include "../../../middleware/content/packages/reader/reader.h"
 #include "../../../state/activity/definition.h"
 #include "../../../state/activity/destination/activity_destination_snapshot.h"
 #include "../../../state/activity/membership/activity_membership_query.h"
+#include "../../../state/build_data/entities/definition.h"
 #include "../../../state/build_data/runtime.h"
 
 namespace sunrise::server::ui::spawn {
@@ -31,10 +29,7 @@ namespace {
 
 namespace native = client::hooks::spawn;
 namespace spawn_keys = client::spawn;
-namespace package_reader = middleware::content::packages::reader;
 namespace picker = core::ui::components::picker;
-
-constexpr std::uint32_t kEntityClass = 0x80809C0FU;
 
 enum class ObjectType : std::uint8_t {
     Inherited = 0,
@@ -131,6 +126,10 @@ Column g_projectile{};
 Column g_loot{};
 std::vector<Candidate> g_allMainCandidates{};
 std::vector<state::build_data::entity_names::Name> g_names{};
+/** Installed entity rows, taken from the published catalog. The panel extracts nothing itself. */
+std::vector<state::build_data::entities::Entity> g_entities{};
+/** Package families the rows above name. */
+std::vector<state::build_data::entities::Family> g_families{};
 bool g_scanned{};
 std::size_t g_capturingKey{spawn_keys::kActionCount};
 
@@ -234,12 +233,45 @@ names_of(std::uint32_t tag) noexcept {
     });
 }
 
-void family_text(std::wstring_view family, std::array<char, 96>& output) noexcept {
-    output = {};
-    const std::size_t count = (std::min)(family.size(), output.size() - 1);
-    for (std::size_t index = 0; index < count; ++index) {
-        const wchar_t value = family[index];
-        output[index] = value >= 32 && value <= 126 ? static_cast<char>(value) : '?';
+/**
+ * @param installed Row of the published catalog.
+ * @return The family name of that row, or an empty view when the row names none.
+ */
+[[nodiscard]] std::string_view
+family_of(const state::build_data::entities::Entity& installed) noexcept {
+    if (installed.familyIndex >= g_families.size()) {
+        return {};
+    }
+    const auto& family = g_families[installed.familyIndex];
+    return {family.name.data(), family.nameLength};
+}
+
+/**
+ * Loads the published entity catalog into the panel.
+ * The panel is a reader of build data: the sweep that fills the catalog runs once in the client
+ * content pass and its result is cached, so no package is opened here.
+ */
+void load_catalog() noexcept {
+    g_names.resize(state::build_data::entity_name_count());
+    std::size_t nameCount = 0;
+    if (!state::build_data::snapshot_entity_names(g_names, nameCount)) {
+        g_names.clear();
+    } else {
+        g_names.resize(nameCount);
+    }
+    g_families.resize(state::build_data::entity_family_count());
+    std::size_t familyCount = 0;
+    if (!state::build_data::snapshot_entity_families(g_families, familyCount)) {
+        g_families.clear();
+    } else {
+        g_families.resize(familyCount);
+    }
+    g_entities.resize(state::build_data::entity_count());
+    std::size_t entityCount = 0;
+    if (!state::build_data::snapshot_entities(g_entities, entityCount)) {
+        g_entities.clear();
+    } else {
+        g_entities.resize(entityCount);
     }
 }
 
@@ -267,10 +299,11 @@ constexpr std::uint64_t kInvalidObjectTypeBit = 1ULL << 63;
 void add_candidate(Column& column,
                    std::uint32_t tag,
                    std::uint8_t type,
-                   std::wstring_view family,
+                   std::string_view family,
                    const state::build_data::entity_names::Name* resolvedName) {
     std::array<char, 96> package{};
-    family_text(family, package);
+    (void)std::snprintf(
+        package.data(), package.size(), "%.*s", static_cast<int>(family.size()), family.data());
     Candidate value{};
     value.tag = tag;
     value.type = static_cast<ObjectType>(type);
@@ -301,15 +334,22 @@ void add_candidate(Column& column,
     column.candidates.push_back(value);
 }
 
-bool collect_entity(void*, const package_reader::ClassEntry& entry) noexcept {
-    if (!native::is_tag_resident(entry.tag)) {
-        return true;
+/**
+ * Sorts one catalog row into the column it belongs to.
+ * Residency and object type belong to the running game, not to the packages, so they are asked
+ * for here rather than stored in the catalog.
+ * @param installed Row of the published catalog.
+ */
+void collect_entity(const state::build_data::entities::Entity& installed) noexcept {
+    if (!native::is_tag_resident(installed.tag)) {
+        return;
     }
     std::uint8_t type = 0;
-    if (!native::object_type(entry.tag, type)) {
-        return true;
+    if (!native::object_type(installed.tag, type)) {
+        return;
     }
-    const auto names = names_of(entry.tag);
+    const std::string_view family = family_of(installed);
+    const auto names = names_of(installed.tag);
     const auto objectType = static_cast<ObjectType>(type);
     const bool namedProjectile = std::any_of(names.begin(), names.end(), [](const auto& name) {
         return projectile_name({name.text.data(), name.length});
@@ -319,13 +359,12 @@ bool collect_entity(void*, const package_reader::ClassEntry& entry) noexcept {
         : objectType == ObjectType::ItemAmmo || objectType == ObjectType::ItemLoot ? &g_loot
                                                                                    : &g_main;
     if (names.empty()) {
-        add_candidate(*column, entry.tag, type, entry.packageFamily, nullptr);
+        add_candidate(*column, installed.tag, type, family, nullptr);
     } else {
         for (const auto& name : names) {
-            add_candidate(*column, entry.tag, type, entry.packageFamily, &name);
+            add_candidate(*column, installed.tag, type, family, &name);
         }
     }
-    return true;
 }
 
 void finish_column(Column& column) {
@@ -370,27 +409,21 @@ void refresh() noexcept {
     g_projectile.candidates.clear();
     g_loot.candidates.clear();
     g_allMainCandidates.clear();
-    g_names.resize(state::build_data::entity_name_count());
-    std::size_t nameCount = 0;
-    if (!state::build_data::snapshot_entity_names(g_names, nameCount)) {
-        g_names.clear();
-    } else {
-        g_names.resize(nameCount);
-    }
-    core::path::Buffer directory{};
-    const bool hasDirectory = client::content::items::packages::package_directory(directory);
-    if (native::ready() && hasDirectory) {
-        package_reader::ScanResult result{};
-        (void)package_reader::scan_class_entries(
-            directory.chars.data(), kEntityClass, &collect_entity, nullptr, result);
-        package_reader::release_caches();
+    // The catalog is published by the content pass, which runs after the page can first be drawn.
+    // Until it is there the page holds no list and stays unlatched, so a later draw takes it up.
+    const bool ready = native::ready() && state::build_data::entities_ready();
+    if (ready) {
+        load_catalog();
+        for (const auto& installed : g_entities) {
+            collect_entity(installed);
+        }
     }
     finish_column(g_main);
     g_allMainCandidates = g_main.candidates;
     apply_main_type_filter(spawn_keys::get().hiddenMainTypes);
     finish_column(g_projectile);
     finish_column(g_loot);
-    g_scanned = true;
+    g_scanned = ready;
 }
 
 [[nodiscard]] const char* preview(const Column& column) noexcept {
@@ -609,15 +642,15 @@ void draw_column(const char* title,
     if (names.empty()) {
         return {};
     }
-        return {names.front().text.data(), names.front().length};
+    return {names.front().text.data(), names.front().length};
 }
 
 /**
- * @param family Package family of one entry.
+ * @param family Package family of one catalog row.
  * @return True when the family holds no spawnable entity.
  */
-[[nodiscard]] bool skipped_family(std::wstring_view family) noexcept {
-    return family.starts_with(L"w64_audio_") || family.starts_with(L"w64_ui_");
+[[nodiscard]] bool skipped_family(std::string_view family) noexcept {
+    return family.starts_with("w64_audio_") || family.starts_with("w64_ui_");
 }
 
 /** Unit names of one faction. Entity names are display names, so matching ignores case. */
@@ -793,23 +826,25 @@ std::vector<RosterEntity> g_roster{};
 bool g_rosterScanned{};
 
 /** Collects one entity of any package, because a batch fills destinations it is not standing in. */
-bool collect_roster(void*, const package_reader::ClassEntry& entry) noexcept {
-    if (skipped_family(entry.packageFamily)) {
-        return true;
+void collect_roster(const state::build_data::entities::Entity& installed) noexcept {
+    const std::string_view family = family_of(installed);
+    if (skipped_family(family)) {
+        return;
     }
-    const std::string_view name = first_name_of(entry.tag);
+    const std::string_view name = first_name_of(installed.tag);
     if (name.empty()) {
-        return true;
+        return;
     }
     RosterEntity value{};
-    value.tag = entry.tag;
+    value.tag = installed.tag;
     (void)std::snprintf(
         value.name.data(), value.name.size(), "%.*s", static_cast<int>(name.size()), name.data());
-    std::array<char, 96> family{};
-    family_text(entry.packageFamily, family);
-    (void)std::snprintf(value.family.data(), value.family.size(), "%s", family.data());
+    (void)std::snprintf(value.family.data(),
+                        value.family.size(),
+                        "%.*s",
+                        static_cast<int>(family.size()),
+                        family.data());
     g_roster.push_back(value);
-    return true;
 }
 
 /** Builds the package-wide roster once. */
@@ -817,21 +852,14 @@ void ensure_roster() noexcept {
     if (g_rosterScanned) {
         return;
     }
+    if (!state::build_data::entities_ready()) {
+        return;
+    }
     g_roster.clear();
-    core::path::Buffer directory{};
-    if (client::content::items::packages::package_directory(directory)) {
-        // The names come from the published catalog, which the entity-name builder fills.
-        g_names.resize(state::build_data::entity_name_count());
-        std::size_t nameCount = 0;
-        if (!state::build_data::snapshot_entity_names(g_names, nameCount)) {
-            g_names.clear();
-        } else {
-            g_names.resize(nameCount);
-        }
-        package_reader::ScanResult result{};
-        (void)package_reader::scan_class_entries(
-            directory.chars.data(), kEntityClass, &collect_roster, nullptr, result);
-        package_reader::release_caches();
+    // Both the names and the entity rows come from the published catalogs the content pass fills.
+    load_catalog();
+    for (const auto& installed : g_entities) {
+        collect_roster(installed);
     }
     g_rosterScanned = true;
 }

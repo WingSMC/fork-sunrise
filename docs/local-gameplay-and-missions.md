@@ -66,6 +66,26 @@ This has several consequences:
 - The population module does not currently remove a placed object through a known game call.
 
 The implementation is in [`spawn_runtime.cpp`](../Sunrise/src/client/hooks/spawn/spawn_runtime.cpp).
+Every game call it uses is found by a byte signature at install time. See
+[Reverse engineering notes](reverse-engineering-notes.md).
+
+### Where the spawnable list comes from
+
+The Spawn page shows one row per installed entity. The list is build data, not a page-local scan:
+
+```mermaid
+graph LR
+    Packages["Installed packages"] --> Build["entity_build.cpp<br/>(one class sweep)"]
+    Build --> Catalog["state/build_data/entities<br/>(tags & families)"]
+    Catalog --> Cache["Build-data cache<br/>(no sweep on later starts)"]
+    Catalog --> Panel["Spawn page<br/>(snapshot)"]
+    Names["entity_name_build.cpp"] --> NameCatalog["state/build_data/entity_names"]
+    NameCatalog --> Panel
+    Panel --> Client["Client hook<br/>(residency & object type)"]
+```
+
+The page asks the client hook whether a tag is loaded and which object type it carries, because
+both belong to the running game and neither can be cached.
 
 ## Server actor path
 

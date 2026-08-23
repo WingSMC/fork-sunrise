@@ -257,11 +257,37 @@ namespace sunrise::state::build_data::cache::records {
  */
 [[nodiscard]] bool decode(const HashNameRecord& record, hash_names::Name& value) noexcept;
 
-[[nodiscard]] bool encode(const entity_names::Name& value,
-                          EntityNameRecord& record) noexcept;
+[[nodiscard]] bool encode(const entity_names::Name& value, EntityNameRecord& record) noexcept;
 
-[[nodiscard]] bool decode(const EntityNameRecord& record,
-                          entity_names::Name& value) noexcept;
+[[nodiscard]] bool decode(const EntityNameRecord& record, entity_names::Name& value) noexcept;
+
+/**
+ * @param value Runtime family row to pack.
+ * @param record Receives the packed disk row.
+ * @return True when the row is canonical and fits the record.
+ */
+[[nodiscard]] bool encode(const entities::Family& value, EntityFamilyRecord& record) noexcept;
+
+/**
+ * @param record Packed disk row.
+ * @param value Receives the runtime family row.
+ * @return True when the disk row is canonical.
+ */
+[[nodiscard]] bool decode(const EntityFamilyRecord& record, entities::Family& value) noexcept;
+
+/**
+ * @param value Runtime entity row to pack.
+ * @param record Receives the packed disk row.
+ * @return True when the row is canonical and fits the record.
+ */
+[[nodiscard]] bool encode(const entities::Entity& value, EntityRecord& record) noexcept;
+
+/**
+ * @param record Packed disk row.
+ * @param value Receives the runtime entity row.
+ * @return True when the disk row is canonical.
+ */
+[[nodiscard]] bool decode(const EntityRecord& record, entities::Entity& value) noexcept;
 
 /**
  * @param value Runtime row to pack.
